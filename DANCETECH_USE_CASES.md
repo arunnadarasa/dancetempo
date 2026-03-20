@@ -2,6 +2,17 @@
 
 This document defines the full DanceTech use case set for the current prototype, with practical flow steps, API mappings, and testing notes.
 
+## Interaction modes (humans & agents)
+
+**DanceTech Protocol** stays **one** contract: payments and API access are governed by **Tempo** + **MPP/x402**. Colloquial pairings (human↔human, human↔agent, agent↔human, agent↔agent) describe **who authorizes** and **who benefits**, not four different protocol specs.
+
+- **Human ↔ human** — Wallet-funded commerce between people/orgs (battles, passes, royalties). Primary flows in §1–§10 below.
+- **Human → agent (orchestrated)** — A human approves spend; an agent or script **calls the same `POST /api/...` routes** (e.g. from MCP, CI, or an assistant). The signing wallet is usually still the user’s unless you implement delegation or server-side treasury.
+- **Agent → human** — Backend or paid job **delivers** to a person (email, SMS, pass state). Example: tournament ops bot + AgentMail after a `charge`.
+- **Agent → agent** — **Machine-to-machine**: server keys, HMAC, or **x402** between services; overlaps with “machine payments” in MPP. This repo often uses **wallet MPP to this backend**, then **Bearer/API-key** upstream (e.g. AgentMail) to avoid inbox scope issues.
+
+When testing, default to **Tempo testnet** and treat **402** responses as “payment required”—whether the client is a browser or an automated caller that can complete the challenge per your security model.
+
 ## Scope
 
 - **MPP catalog:** Hosted integrations (Suno, AgentMail, KicksDB, weather, …) are listed at [mpp.dev/services](https://mpp.dev/services) with base URLs and prices; this repo’s proxies use the same hosts via env (see `README.md` and `.env.example`).

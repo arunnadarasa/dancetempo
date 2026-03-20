@@ -4,6 +4,19 @@
 
 **DanceTempo** (this repo, `dancetempo`) is the **reference implementation**: a single hub, dedicated full-screen flows, and a Node/Express API that encodes the protocol in production-style code. Fork it to ship your own product; treat [`DANCETECH_USE_CASES.md`](./DANCETECH_USE_CASES.md) as the behavioral contract.
 
+### Interaction modes (humans & agents)—one protocol, not four
+
+DanceTech Protocol is **one** stack (Tempo settlement + MPP/x402 authorization). What changes is **who authorizes spend** and **who receives value**—often described informally as human↔human, human↔agent, or agent↔agent flows. Those labels are **use-case shorthand**, not separate protocols.
+
+| Shorthand | Typical meaning here | How it maps in this repo |
+|-----------|----------------------|----------------------------|
+| **Human → human** | Dancer, fan, or organizer pays another person or org (entry fees, passes, splits). | Battle, fan pass, clip sale scaffolds; wallet-mediated `charge` / payout flows. |
+| **Human → agent** | A person approves payment; an **orchestrator** (UI wizard, MCP tool, script) calls your HTTP APIs. | Same routes as the hub; the **human still signs** with the browser wallet unless you delegate. |
+| **Agent → human** | Automated action delivers something to a person (email, alert, receipt, pass). | Ops bot + AgentMail, notifications; fulfillment after payment—not a second payment “protocol.” |
+| **Agent → agent** | Service-to-service: backends, cron, or **machine payments** between APIs. | `402` + `mppx` on the server, **API keys** where allowed (e.g. AgentMail after MPP), webhooks, `POST /api/*` from trusted workers. |
+
+**Roles (mental model):** **Payer** (human wallet vs server treasury vs delegated agent), **beneficiary** (human vs org vs system), **channel** (browser vs server). Ambient agents (e.g. coding assistants) consume **skills** like [`CLAWHUB.md`](./CLAWHUB.md) and [`.cursor/skills/clawhub`](./.cursor/skills/clawhub/SKILL.md); runtime agents should call the **same** Express contracts with explicit trust boundaries.
+
 ---
 
 ## What “super app” means here
