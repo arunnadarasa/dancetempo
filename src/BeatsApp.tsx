@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react'
 import { Mppx as MppxClient, tempo as tempoClient } from 'mppx/client'
-import { createWalletClient, custom } from 'viem'
+import {
+  type BrowserEthereumProvider,
+  TEMPO_MPP_SESSION_MAX_DEPOSIT,
+  tempoBrowserWalletTransport,
+} from './tempoMpp'
+import { createWalletClient } from 'viem'
 import { tempo as tempoMainnet, tempoModerato } from 'viem/chains'
 import { tempoActions } from 'viem/tempo'
 import './App.css'
@@ -195,7 +200,10 @@ export default function BeatsApp() {
         const chain = network === 'testnet' ? tempoTestnetChain : tempoMainnetChain
         const walletClient = createWalletClient({
           chain,
-          transport: custom(window.ethereum!),
+          transport: tempoBrowserWalletTransport(
+            window.ethereum as BrowserEthereumProvider,
+            chain.rpcUrls.default.http[0],
+          ),
           account: walletAddress as `0x${string}`,
         }).extend(tempoActions())
 
@@ -205,6 +213,7 @@ export default function BeatsApp() {
               tempoClient({
                 account: walletAddress as `0x${string}`,
                 mode,
+                maxDeposit: TEMPO_MPP_SESSION_MAX_DEPOSIT,
                 getClient: async () => walletClient,
               }),
             ],

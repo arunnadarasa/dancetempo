@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { AGENTMAIL_DEMO_INBOX_ID } from './agentmailDemo'
 import './App.css'
 import {
   addTxHistory,
@@ -541,6 +542,7 @@ function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            inbox_id: AGENTMAIL_DEMO_INBOX_ID,
             to: 'ops@dancetech.finance',
             subject: `Ops Alert: ${data.actionType}`,
             text: `Event ${data.eventId} action ${data.actionType} executed at ${data.createdAt}.`,
@@ -672,6 +674,9 @@ function App() {
               prompt: 'Aggressive krump battle beat, 100 bpm, dark bass, crowd energy',
               style: 'krump',
               duration: 30,
+              customMode: false,
+              instrumental: true,
+              model: 'V5',
             }),
           })
           const { data } = await parseResponse(res)
@@ -705,7 +710,7 @@ function App() {
           const triggerRes = await fetch('/api/social/stablesocial/instagram-profile', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: 'nike' }),
+            body: JSON.stringify({ handle: 'nike' }),
           })
           const { data } = await parseResponse(triggerRes)
           if (!triggerRes.ok) {
@@ -773,6 +778,9 @@ function App() {
           <button className={showExtraPanel ? 'active' : ''} onClick={() => setShowExtraPanel(true)}>
             Extra Use Case APIs
           </button>
+          <a className="secondary" href="/dance-extras" style={{ padding: '0.5rem 0.75rem', borderRadius: 8 }}>
+            7 flows (testnet/mainnet page)
+          </a>
         </div>
       </header>
 
@@ -780,7 +788,11 @@ function App() {
         <section className="grid">
           <article className="card">
             <h2>Extra Use Case API Demos</h2>
-            <p>Run the remaining seven use cases as guided multi-step flows.</p>
+            <p>
+              Quick API demos from the hub (multi-step). The <strong>seven DanceTech</strong> flows (judge → fan pass)
+              also have a dedicated <a href="/dance-extras">/dance-extras</a> page with <strong>simulate vs live Tempo MPP</strong>.
+              Card, travel, kicks, weather, etc. have their own routes — see links at the bottom of the hub.
+            </p>
             <div className="extra-action-grid">
               {(Object.keys(extraFlowCopy) as ExtraFlowKey[]).map((key) => (
                 <button key={key} className={activeExtraFlow === key ? 'active' : ''} onClick={() => resetExtra(key)}>
@@ -927,6 +939,10 @@ function App() {
           for dedicated Beat API Licensing flow.
         </p>
         <p>
+          Open <code>/dance-extras</code> for the seven other core DanceTech scaffolds (judge, cypher, clips,
+          reputation, studio AI, bot, fan pass) with <strong>testnet/mainnet</strong> on each API call.
+        </p>
+        <p>
           Open <code>/card</code> for dedicated virtual debit card creation.
         </p>
         <p>
@@ -943,6 +959,36 @@ function App() {
         </p>
         <p>
           Open <code>/music</code> for Suno music generation tests.
+        </p>
+        <p>
+          Open <code>/parallel</code> for Parallel web search / extract / task (MPP on Tempo mainnet).
+        </p>
+        <p>
+          Open <code>/weather</code> for OpenWeather current conditions (MPP on Tempo mainnet).
+        </p>
+        <p>
+          Open <code>/openai</code> for OpenAI chat completions via MPP (<code>openai.mpp.tempo.xyz</code>).
+        </p>
+        <p>
+          Open <code>/anthropic</code> for Claude (Messages API + OpenAI-compatible chat) via MPP (
+          <code>anthropic.mpp.tempo.xyz</code>).
+        </p>
+        <p>
+          Open <code>/openrouter</code> for OpenRouter unified chat via MPP (<code>openrouter.mpp.tempo.xyz</code>).
+        </p>
+        <p>
+          Open <code>/perplexity</code> for Perplexity Sonar / search / embeddings via MPP (
+          <code>perplexity.mpp.tempo.xyz</code>).
+        </p>
+        <p>
+          Open <code>/alchemy</code> for Alchemy JSON-RPC + NFT API v3 via MPP (<code>mpp.alchemy.com</code>).
+        </p>
+        <p>
+          Open <code>/fal</code> for fal.ai image / video / audio models via MPP (<code>fal.mpp.tempo.xyz</code>).
+        </p>
+        <p>
+          Open <code>/replicate</code> for Replicate model runs / predictions via MPP (
+          <code>replicate.mpp.paywithlocus.com</code>).
         </p>
         <p>
           Open <code>/kicks</code> for dedicated KicksDB market intelligence tests.

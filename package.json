@@ -12,9 +12,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@x402/extensions": "^2.7.0",
+    "buffer": "^6.0.3",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "mppx": "^0.4.7",
+    "multer": "^2.1.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

@@ -11,7 +11,7 @@ A **super app** for the DanceTech industry: one codebase that combines **Tempo**
 | **Hub (`/`)** | Single home for **10+ DanceTech use cases** (battle entry, coaching, beats, judges, cypher pots, fan pass, reputation, studio AI, bot actions, etc.) with API previews and demos. |
 | **Dedicated frontends** | Full-screen flows for **live Tempo testnet/mainnet** and complex UX (wallet, network, receipts, recovery). |
 | **Backend (`server/`)** | Express API: MPP intents, live payment verification, proxies to paid APIs (KicksDB, AgentMail, travel, weather, etc.). |
-| **Integrations** | Optional rails: AgentMail, StablePhone, StableSocial, StableTravel, Laso cards, Suno, OpenWeather, Google Maps, Aviationstack, KicksDB, TIP‑20 factory, OpenAI explainer. |
+| **Integrations** | Optional rails: AgentMail, StablePhone, StableSocial, StableTravel, Laso cards, Suno, Parallel, OpenWeather, OpenAI MPP (`/openai`), Google Maps, Aviationstack, KicksDB, TIP‑20 factory, OpenAI explainer. |
 
 You can treat DanceTempo as a **reference implementation**: product teams pick a use case, wire their own keys/env, and ship.
 
@@ -24,6 +24,16 @@ You can treat DanceTempo as a **reference implementation**: product teams pick a
 - **Backend:** Node.js, Express 5  
 - **Docs in repo:** [`DANCETECH_USE_CASES.md`](./DANCETECH_USE_CASES.md) — flows, endpoints, testing notes  
 
+### Local dev (Vite + API)
+
+| Command | What runs |
+|--------|------------|
+| `npm run dev` | Vite only — **proxies `/api` → `http://localhost:8787`** |
+| `npm run server` | Express API (default **port 8787**) |
+| `npm run dev:full` | Both (recommended for live MPP flows) |
+
+If the UI shows **`Cannot POST /api/...`** (HTML 404), the backend on **8787** is missing that route (often an **old** `node server/index.js` still running). **Restart** `npm run server`. Quick check: open **`GET http://localhost:8787/api/dance-extras/live`** — you should see JSON with `flowKeys`.
+
 ---
 
 ## Tempo & MPP (quick reference)
@@ -32,6 +42,21 @@ You can treat DanceTempo as a **reference implementation**: product teams pick a
 - **Tempo mainnet:** chain ID `4217` — common fee token: **USDC** (e.g. bridged USDC.e where configured)  
 - **MPP (Machine Payments Protocol):** server creates/verifies intents; browser can pay via injected wallet (`MetaMask` / Tempo wallet) using `MppxClient` + `tempoClient`.  
 - **x402:** some third-party APIs return `402` + `WWW-Authenticate`; the app forwards challenges so `mppx` can pay and retry.
+
+### MPP service directory (`mpp.dev`)
+
+The **[Machine Payments Protocol service catalog](https://mpp.dev/services)** lists hosted integrations (base URLs, `POST` paths, and per-call pricing). Use it when adding new rails or checking upstream contracts. Agent-oriented discovery is often linked from that site as **`llms.txt`**.
+
+**How this repo maps to the catalog**
+
+| Catalog idea | In DanceTempo |
+|--------------|----------------|
+| Wallet pays via **402 → `mppx`** on **Tempo mainnet** | Same pattern on `/music` (Suno), `/travel`, `/kicks`, `/card`, etc. |
+| **AgentMail** has two entry points | **`AGENTMAIL_BASE_URL`** (`https://api.agentmail.to`) for Bearer/API-key flows; **`AGENTMAIL_MPP_BASE_URL`** (`https://mpp.api.agentmail.to`) for wallet-paid MPP passthrough — both are named in `.env.example` and match [AgentMail on MPP](https://mpp.dev/services#agentmail). |
+| **Suno** at `suno.mpp.paywithlocus.com` | **`SUNO_BASE_URL`** + `/suno/generate-music` — no vendor “Suno API key” in the UI; payment is MPP headers from the wallet. |
+| **Parallel** at `parallelmpp.dev` | **`PARALLEL_BASE_URL`** — `/parallel` proxies search / extract / task (+ task poll). |
+| **OpenWeather** at `weather.mpp.paywithlocus.com` | **`OPENWEATHER_BASE_URL`** — `/weather` uses wallet MPP; optional **`OPENWEATHER_API_KEY`** for server `appid`. |
+| **OpenAI** at `openai.mpp.tempo.xyz` | **`OPENAI_MPP_BASE_URL`** — `/openai` proxies chat, images, speech & transcription (see `POST /api/openai/*`). |
 
 ---
 
@@ -43,12 +68,16 @@ You can treat DanceTempo as a **reference implementation**: product teams pick a
 | `/battle` | Battle entry + auto payout (live testnet/mainnet) |
 | `/coaching` | Coaching minutes marketplace (live payments) |
 | `/beats` | Beat API licensing (live payments) |
+| `/dance-extras` | Seven core hub flows (judge, cypher, clips, reputation, studio AI, bot, fan pass); **simulate** mock APIs or **Live Tempo MPP** via `POST /api/dance-extras/live/:flowKey/:network` |
 | `/card` | Virtual debit card (Laso / MPP + demo fallback) |
 | `/travel` | StableTravel, Aviationstack, Google Maps |
 | `/email` | AgentMail ops (wallet-paid relay + send) |
 | `/ops` | AgentMail + StablePhone console |
 | `/social` | StableSocial |
 | `/music` | Suno |
+| `/parallel` | Parallel search / extract / task (MPP) |
+| `/weather` | OpenWeather current conditions (MPP) |
+| `/openai` | OpenAI chat completions (MPP gateway) |
 | `/kicks` | KicksDB (live MPP + simulate) |
 | `/tip20` | TIP‑20 token launch & post-launch ops |
 
@@ -110,10 +139,10 @@ Copy **`.env.example`** → **`.env`**. Never commit **`.env`** (it is gitignore
 
 Typical groups:
 
-- **OpenAI** — `OPENAI_API_KEY` (server-side explainer only)  
+- **OpenAI** — `OPENAI_API_KEY` (optional; hub explainer + optional Bearer on MPP proxy), `OPENAI_MPP_BASE_URL` (default `https://openai.mpp.tempo.xyz`), `OPENAI_MODEL` (hub explainer default)  
 - **MPP / Tempo** — `MPP_RECIPIENT`, `TMPO_TESTNET`, `PAYMENT_MODE`, etc.  
-- **AgentMail** — `AGENTMAIL_API_KEY`, `AGENTMAIL_BASE_URL`, optional `AGENTMAIL_MPP_BASE_URL`, `AGENTMAIL_INBOX_ID`, `AGENTMAIL_SEND_FEE`  
-- **Integrations** — KicksDB, StablePhone, StableSocial, Laso, Suno, weather, maps, aviation, etc.  
+- **AgentMail** — `AGENTMAIL_API_KEY` (optional), `AGENTMAIL_BASE_URL` (direct API), **`AGENTMAIL_MPP_BASE_URL`** (wallet-paid host; default matches [mpp.dev#agentmail](https://mpp.dev/services#agentmail)), `AGENTMAIL_INBOX_ID`, `AGENTMAIL_SEND_FEE`  
+- **Integrations** — KicksDB, StablePhone, StableSocial, Laso, Suno (`SUNO_BASE_URL`), Parallel (`PARALLEL_BASE_URL`), OpenWeather (`OPENWEATHER_BASE_URL`, optional `OPENWEATHER_API_KEY`), OpenAI MPP (`OPENAI_MPP_BASE_URL`), maps, aviation, etc.  
 
 See `.env.example` for the full list and placeholders.
 

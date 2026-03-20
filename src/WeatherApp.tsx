@@ -33,94 +33,39 @@ const base64UrlDecode = (value: string) => {
   return atob(s + pad)
 }
 
-/** Suno MPP `generate-music` — must match upstream enum. */
-const SUNO_MODEL_OPTIONS = ['V4', 'V4_5', 'V4_5ALL', 'V4_5PLUS', 'V5'] as const
-
 const getErrorMessage = (err: unknown) => {
   if (err instanceof Error) return err.message
   if (typeof err === 'string') return err
   return 'Unknown error'
 }
 
-/** Collect http(s) URLs that are likely playable audio from nested Suno payloads. */
-const AUDIO_URL_KEYS = new Set([
-  'audio_url',
-  'audioUrl',
-  'stream_url',
-  'streamUrl',
-  'audio',
-  'src',
-  'preview_url',
-  'previewUrl',
-  'clip_url',
-  'download_url',
-  'downloadUrl',
-])
-
-function looksLikeAudioHttpUrl(s: string) {
-  if (!/^https?:\/\//i.test(s)) return false
-  if (/\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(s)) return true
-  if (/audio|stream|clip|cdn|suno|music|track/i.test(s)) return true
-  return false
-}
-
-function collectSunoAudioUrls(value: unknown, out: Set<string> = new Set()): string[] {
-  if (value == null) return [...out]
-  if (typeof value === 'string') {
-    if (looksLikeAudioHttpUrl(value)) out.add(value)
-    return [...out]
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectSunoAudioUrls(item, out)
-    return [...out]
-  }
-  if (typeof value === 'object') {
-    const o = value as Record<string, unknown>
-    for (const [k, v] of Object.entries(o)) {
-      if (typeof v === 'string' && /^https?:\/\//i.test(v)) {
-        if (AUDIO_URL_KEYS.has(k) || looksLikeAudioHttpUrl(v)) out.add(v)
-      } else {
-        collectSunoAudioUrls(v, out)
-      }
-    }
-  }
-  return [...out]
-}
-
-/** Prefer upstream `details` when the server only returns a generic error label. */
-const sunoErrorMessage = (dataObj: { error?: string; details?: unknown; hint?: string } | null, text: string) => {
-  const generic = 'Suno request failed.'
+const formatApiError = (dataObj: { error?: string; details?: unknown; hint?: string } | null, raw: string) => {
   const err = dataObj?.error
   const d = dataObj?.details
   const detailStr =
-    d == null ? '' : typeof d === 'string' ? d : JSON.stringify(d).slice(0, 600)
+    d == null ? '' : typeof d === 'string' ? d : JSON.stringify(d).slice(0, 1200)
   const hint = typeof dataObj?.hint === 'string' ? dataObj.hint : ''
-  if (err === generic && detailStr) return hint ? `${detailStr} (${hint})` : detailStr
-  if (detailStr && err) return `${err} ${detailStr}`
-  return err || detailStr || text || generic
+  if (detailStr && err) return hint ? `${err} ${detailStr} (${hint})` : `${err} ${detailStr}`
+  if (detailStr) return hint ? `${detailStr} (${hint})` : detailStr
+  return err || raw || 'Request failed'
 }
 
-export default function MusicApp() {
-  const [prompt, setPrompt] = useState('Aggressive krump battle beat, 100 bpm, dark bass, crowd energy')
-  const [style, setStyle] = useState('krump')
-  const [duration, setDuration] = useState('30')
-  /** Suno `generate-music` requires `customMode`; false = simple prompt-based generation. */
-  const [customMode, setCustomMode] = useState(false)
-  /** Suno `generate-music` requires `instrumental` (no vocals when true). */
-  const [instrumental, setInstrumental] = useState(true)
-  const [model, setModel] = useState<(typeof SUNO_MODEL_OPTIONS)[number]>('V5')
+export default function WeatherApp() {
+  const [lat, setLat] = useState('34.0522')
+  const [lon, setLon] = useState('-118.2437')
+  const [units, setUnits] = useState<'metric' | 'imperial' | 'standard'>('metric')
+
   const [status, setStatus] = useState<'idle' | 'ok' | 'error'>('idle')
   const [summary, setSummary] = useState('—')
   const [error, setError] = useState('')
+  const [resultJson, setResultJson] = useState('')
   const [loading, setLoading] = useState(false)
   const [walletAddress, setWalletAddress] = useState('')
   const [log, setLog] = useState<string[]>([
-    'Music dashboard initialized. Connect wallet on Tempo mainnet for paid Suno (MPP).',
+    'Weather dashboard initialized. Connect wallet on Tempo mainnet for MPP-paid OpenWeather (or set OPENWEATHER_API_KEY on server).',
   ])
-  /** Playable URLs from last successful generate (upstream may nest under `data`, `clips`, etc.). */
-  const [audioUrls, setAudioUrls] = useState<string[]>([])
 
-  const pushLog = (entry: string) => setLog((prev) => [entry, ...prev].slice(0, 12))
+  const pushLog = (entry: string) => setLog((prev) => [entry, ...prev].slice(0, 14))
 
   const parseResponse = async (res: Response) => {
     const raw = await res.text()
@@ -240,73 +185,67 @@ export default function MusicApp() {
     try {
       return await makeMppx('push').fetch(url, init)
     } catch {
-      pushLog('Suno: retry with pull-mode MPP.')
+      pushLog('OpenWeather: retry with pull-mode MPP.')
       return await makeMppx('pull').fetch(url, init)
     }
   }
 
-  const generate = async () => {
+  const fetchWeather = async () => {
     if (!walletAddress) {
-      setError('Connect wallet on Tempo mainnet first.')
+      setError('Connect wallet on Tempo mainnet first (or configure OPENWEATHER_API_KEY on the server and use the hub demo).')
       return
     }
+    const latNum = Number(lat)
+    const lonNum = Number(lon)
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+      setError('Enter valid lat and lon.')
+      return
+    }
+
     setLoading(true)
     setError('')
     setStatus('idle')
-    setAudioUrls([])
+    setResultJson('')
     try {
       const requestInit: RequestInit = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt,
-          style,
-          duration: Number(duration),
-          customMode,
-          instrumental,
-          model,
+          lat: latNum,
+          lon: lonNum,
+          units,
         }),
       }
-      const res = await runMppFetch('/api/music/suno/generate', requestInit)
+      const res = await runMppFetch('/api/travel/openweather/current', requestInit)
       const { data, raw } = await parseResponse(res)
-      const dataObj = data as { error?: string; details?: unknown; result?: unknown } | null
-
+      const dataObj = data as { error?: string; details?: unknown; result?: unknown; hint?: string } | null
       if (!res.ok) {
-        throw new Error(sunoErrorMessage(dataObj, raw))
+        throw new Error(formatApiError(dataObj, raw))
       }
-
-      const r = dataObj?.result
-      const resultObj = r && typeof r === 'object' ? (r as Record<string, unknown>) : null
-      const id =
-        (resultObj?.id as string | undefined) ||
-        (resultObj?.track_id as string | undefined) ||
-        (resultObj?.jobId as string | undefined) ||
-        (resultObj?.job_id as string | undefined) ||
-        null
-
-      const urls = collectSunoAudioUrls(r)
-      setAudioUrls(urls)
-
+      const result = dataObj?.result
+      setResultJson(
+        typeof result === 'string' ? result : JSON.stringify(result ?? dataObj, null, 2),
+      )
+      const main = result && typeof result === 'object' && result !== null ? (result as { main?: { temp?: number } }).main : null
+      const weatherArr =
+        result && typeof result === 'object' && result !== null
+          ? (result as { weather?: { main?: string }[] }).weather
+          : null
+      const condition = Array.isArray(weatherArr) && weatherArr[0]?.main ? weatherArr[0].main : null
+      const temp = main?.temp
       setStatus('ok')
       setSummary(
-        id
-          ? urls.length
-            ? `Suno job: ${id} · ${urls.length} track URL(s)`
-            : `Suno job: ${id}`
-          : urls.length
-            ? `${urls.length} track URL(s) ready`
-            : 'Suno response received',
+        temp != null || condition
+          ? `${condition || 'Weather'} · ${temp != null ? `${temp}° (${units})` : 'temp n/a'}`
+          : 'OpenWeather response received',
       )
-      pushLog(
-        urls.length
-          ? `Suno generate succeeded — ${urls.length} audio URL(s) for playback.`
-          : 'Suno generate request succeeded (no audio URL in payload yet; generation may be async).',
-      )
+      pushLog('Current weather request succeeded.')
     } catch (err) {
       const message = getErrorMessage(err)
       setStatus('error')
       setError(message)
-      pushLog(`Generate failed: ${message}`)
+      setSummary('—')
+      pushLog(`Request failed: ${message}`)
     } finally {
       setLoading(false)
     }
@@ -315,15 +254,20 @@ export default function MusicApp() {
   return (
     <main className="app">
       <header className="hero">
-        <h1>Music Dashboard</h1>
+        <h1>Weather</h1>
         <p>
-          Suno on the <strong>Tempo mainnet</strong> Machine Payments stack (wallet-paid via x402 / MPP).
+          OpenWeather current conditions via{' '}
+          <a href="https://weather.mpp.paywithlocus.com" target="_blank" rel="noreferrer">
+            MPP host
+          </a>{' '}
+          on <strong>Tempo mainnet</strong> (wallet-paid x402 / MPP), or optional{' '}
+          <code>OPENWEATHER_API_KEY</code> on the server.
         </p>
       </header>
 
       <section className="card" style={{ marginBottom: '1rem' }}>
         <p className="intent" style={{ margin: '0 0 0.75rem' }}>
-          Connect a wallet on Tempo mainnet to pay for Suno through MPP (402 → wallet).
+          Connect a wallet on Tempo mainnet to pay for the lookup when no server API key is set.
         </p>
         <div className="actions" style={{ margin: 0 }}>
           <button className="secondary" onClick={connectWallet} disabled={loading || !!walletAddress}>
@@ -341,58 +285,28 @@ export default function MusicApp() {
 
       <section className="grid">
         <article className="card">
-          <h2>Suno generate</h2>
+          <h2>Current weather</h2>
           <div className="field-grid">
             <label>
-              Prompt
-              <input value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={loading} />
+              Latitude
+              <input value={lat} onChange={(e) => setLat(e.target.value)} disabled={loading} inputMode="decimal" />
             </label>
             <label>
-              Style
-              <input value={style} onChange={(e) => setStyle(e.target.value)} disabled={loading} />
+              Longitude
+              <input value={lon} onChange={(e) => setLon(e.target.value)} disabled={loading} inputMode="decimal" />
             </label>
             <label>
-              Duration (seconds)
-              <input value={duration} onChange={(e) => setDuration(e.target.value)} disabled={loading} />
-            </label>
-            <label>
-              Model
-              <select value={model} onChange={(e) => setModel(e.target.value as (typeof SUNO_MODEL_OPTIONS)[number])} disabled={loading}>
-                {SUNO_MODEL_OPTIONS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
+              Units
+              <select value={units} onChange={(e) => setUnits(e.target.value as typeof units)} disabled={loading}>
+                <option value="metric">metric (°C)</option>
+                <option value="imperial">imperial (°F)</option>
+                <option value="standard">standard (K)</option>
               </select>
-            </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={instrumental}
-                onChange={(e) => setInstrumental(e.target.checked)}
-                disabled={loading}
-              />
-              <span>
-                Instrumental{' '}
-                <span className="hint">(no vocals; off = with vocals)</span>
-              </span>
-            </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={customMode}
-                onChange={(e) => setCustomMode(e.target.checked)}
-                disabled={loading}
-              />
-              <span>
-                Custom mode{' '}
-                <span className="hint">(advanced; leave off for simple prompt)</span>
-              </span>
             </label>
           </div>
           <div className="actions">
-            <button onClick={generate} disabled={loading || !walletAddress}>
-              {loading ? 'Generating...' : 'Generate with Suno'}
+            <button onClick={fetchWeather} disabled={loading || !walletAddress}>
+              {loading ? 'Fetching…' : 'Get current weather'}
             </button>
           </div>
         </article>
@@ -412,38 +326,38 @@ export default function MusicApp() {
           {error ? <p className="error">{error}</p> : null}
           <h4>Latest actions</h4>
           <ul className="log">
-            {log.map((entry) => (
-              <li key={entry}>{entry}</li>
+            {log.map((entry, i) => (
+              <li key={`${i}-${entry.slice(0, 48)}`}>{entry}</li>
             ))}
           </ul>
         </article>
       </section>
 
-      {audioUrls.length > 0 ? (
-        <section className="card music-playback" style={{ marginTop: '1rem' }}>
-          <h2>Playback</h2>
-          <p className="intent" style={{ marginTop: 0 }}>
-            Listen to the returned track(s). If the host only returned a job id, poll status or regenerate.
-          </p>
-          <ul className="audio-list">
-            {audioUrls.map((src, i) => (
-              <li key={`${src}-${i}`}>
-                <span className="audio-label">Track {i + 1}</span>
-                <audio className="audio-player" controls preload="metadata" src={src}>
-                  <a href={src} target="_blank" rel="noreferrer">
-                    Open audio
-                  </a>
-                </audio>
-              </li>
-            ))}
-          </ul>
+      {resultJson ? (
+        <section className="card" style={{ marginTop: '1rem' }}>
+          <h3>Result</h3>
+          <pre
+            style={{
+              margin: 0,
+              padding: '0.75rem',
+              background: '#fafafa',
+              borderRadius: '0.5rem',
+              border: '1px solid #e4e4e7',
+              overflow: 'auto',
+              maxHeight: 'min(70vh, 520px)',
+              fontSize: '0.8rem',
+              lineHeight: 1.45,
+            }}
+          >
+            {resultJson}
+          </pre>
         </section>
       ) : null}
 
       <section className="card api">
-        <h3>Music API Contract</h3>
+        <h3>API</h3>
         <div className="api-list">
-          <code>POST /api/music/suno/generate</code>
+          <code>POST /api/travel/openweather/current</code>
         </div>
       </section>
     </main>

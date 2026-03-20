@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createPublicClient, createWalletClient, custom, formatUnits, http, parseUnits } from 'viem'
+import { createPublicClient, createWalletClient, formatUnits, http, parseUnits } from 'viem'
+import { type BrowserEthereumProvider, tempoBrowserWalletTransport } from './tempoMpp'
 import { writeContract } from 'viem/actions'
 import { tempo as tempoMainnet, tempoModerato } from 'viem/chains'
 import { Abis, Addresses, tempoActions, withFeePayer } from 'viem/tempo'
@@ -131,7 +132,10 @@ export default function Tip20App() {
 
   const getWalletTransport = () => {
     if (!window.ethereum) throw new Error('Wallet not found.')
-    const defaultTransport = custom(window.ethereum as unknown as Parameters<typeof custom>[0])
+    const defaultTransport = tempoBrowserWalletTransport(
+      window.ethereum as BrowserEthereumProvider,
+      rpcUrl,
+    )
     return sponsoredFees
       ? withFeePayer(defaultTransport, http(sponsorUrl), { policy: 'sign-only' })
       : defaultTransport
@@ -304,7 +308,10 @@ export default function Tip20App() {
       // Using the plain writeContract path (not sendCallsSync) keeps this as a direct EOA tx.
       const walletClient = createWalletClient({
         chain: selectedChain,
-        transport: custom(window.ethereum as unknown as Parameters<typeof custom>[0]),
+        transport: tempoBrowserWalletTransport(
+          window.ethereum as BrowserEthereumProvider,
+          rpcUrl,
+        ),
         account: walletAddress as `0x${string}`,
       })
 

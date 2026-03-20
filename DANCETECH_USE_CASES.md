@@ -4,6 +4,7 @@ This document defines the full DanceTech use case set for the current prototype,
 
 ## Scope
 
+- **MPP catalog:** Hosted integrations (Suno, AgentMail, KicksDB, weather, …) are listed at [mpp.dev/services](https://mpp.dev/services) with base URLs and prices; this repo’s proxies use the same hosts via env (see `README.md` and `.env.example`).
 - Network: Tempo `testnet` and `mainnet`
 - Payment rail: MPP style `charge` and `session` patterns
 - Locus bridge: Laso Finance endpoints can be used for card issuance and status polling
@@ -125,6 +126,39 @@ Intent type: `charge`
 - Suno is relevant to Beat API Licensing because creators can generate new beat drafts, then route into paid licensing flows.
 - It supports rapid prototyping for event promos, battle intros, and creator packs tied to monetized beat distribution.
 - Tempo x MPP reference endpoint: [suno.mpp.paywithlocus.com](https://suno.mpp.paywithlocus.com)
+
+---
+
+## Parallel (web search / extract / task)
+
+Dedicated UI: **`/parallel`**. Uses **Tempo mainnet** + **`mppx`** for paid `POST`s; task status polling uses **`GET /api/parallel/task/:runId`** (proxied to upstream; typically no per-poll charge).
+
+### API mapping
+
+- `POST /api/parallel/search` → upstream `POST /api/search`
+- `POST /api/parallel/extract` → `POST /api/extract`
+- `POST /api/parallel/task` → `POST /api/task`
+- `GET /api/parallel/task/:runId` → `GET /api/task/:runId`
+
+Reference host: [parallelmpp.dev](https://parallelmpp.dev) · env: **`PARALLEL_BASE_URL`**
+
+---
+
+## OpenAI (chat via MPP gateway)
+
+Dedicated UI: **`/openai`**. Proxies **`POST /v1/chat/completions`** to **`OPENAI_MPP_BASE_URL`** (default `https://openai.mpp.tempo.xyz`) with **Tempo mainnet** + **`mppx`**. Optional **`OPENAI_API_KEY`** adds `Authorization: Bearer` on the server.
+
+The hub **AI explainer** still uses **`POST /api/ai/explain-flow`** and direct **`api.openai.com`** when **`OPENAI_API_KEY`** is set.
+
+### API mapping
+
+- `POST /api/openai/chat/completions` → `POST /v1/chat/completions`
+- `POST /api/openai/images/generations` → `POST /v1/images/generations`
+- `POST /api/openai/audio/speech` → `POST /v1/audio/speech` (audio returned as base64 JSON)
+- `POST /api/openai/audio/transcriptions` → `POST /v1/audio/transcriptions` (multipart `file` + `model`)
+- `POST /api/ai/explain-flow` (hub) → OpenAI direct (key required)
+
+Catalog: [mpp.dev/services](https://mpp.dev/services) (OpenAI on Tempo)
 
 ---
 
@@ -273,6 +307,7 @@ Intent type: `charge`
 
 - OpenWeather is relevant to tournament operations because weather conditions impact travel windows, call times, and safety.
 - It complements travel routing by adding real-time environmental context for venue and transport decisions.
+- Dedicated wallet-paid UI: **`/weather`** → `POST /api/travel/openweather/current` → MPP **`POST /openweather/current-weather`** JSON body `{ lat, lon, units? }` (not legacy GET `/data/2.5/weather`; see [mpp.dev](https://mpp.dev/api/services) OpenWeather).
 - Integration reference: [OpenWeather](https://openweathermap.org)
 - Tempo x MPP reference endpoint: [weather.mpp.paywithlocus.com](https://weather.mpp.paywithlocus.com)
 

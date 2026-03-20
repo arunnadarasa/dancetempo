@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import express from 'express'
+import multer from 'multer'
 import { Receipt } from 'mppx'
 import { Mppx as MppxServer, tempo as tempoServer } from 'mppx/server'
 import { createPublicClient, http } from 'viem'
@@ -24,6 +25,11 @@ import {
 
 const app = express()
 const port = Number(process.env.PORT || 8787)
+
+const openAiMppUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+})
 const mppSecretKey =
   process.env.MPP_SECRET_KEY || 'dev_only_replace_with_real_secret_key'
 
@@ -100,9 +106,27 @@ function toFetchRequest(req) {
   return new Request(url, { method: req.method, headers, body })
 }
 
+/**
+ * Forward a fetch Response to Express. We buffer the body with `res.send()`, so we must not
+ * forward `Content-Length` + `Transfer-Encoding` from upstream — that pair is illegal in HTTP/1.1
+ * and breaks Node's client (e.g. Vite's proxy to this server): "Parse Error: Content-Length can't
+ * be present with Transfer-Encoding".
+ */
 async function sendFetchResponse(res, fetchResponse) {
   res.status(fetchResponse.status)
-  fetchResponse.headers.forEach((value, key) => res.setHeader(key, value))
+  fetchResponse.headers.forEach((value, key) => {
+    const lower = key.toLowerCase()
+    if (
+      lower === 'transfer-encoding' ||
+      lower === 'content-length' ||
+      lower === 'content-encoding' ||
+      lower === 'connection' ||
+      lower === 'keep-alive'
+    ) {
+      return
+    }
+    res.setHeader(key, value)
+  })
   const text = await fetchResponse.text()
   res.send(text)
 }
@@ -112,6 +136,7 @@ function getForwardAuthHeaders(req) {
   const authorization = req.get('authorization')
   const payment = req.get('payment')
   const paymentReceipt = req.get('payment-receipt')
+  const signInWithX = req.get('sign-in-with-x')
   if (typeof authorization === 'string' && authorization.length > 0) {
     headers.Authorization = authorization
   }
@@ -121,7 +146,260 @@ function getForwardAuthHeaders(req) {
   if (typeof paymentReceipt === 'string' && paymentReceipt.length > 0) {
     headers['Payment-Receipt'] = paymentReceipt
   }
+  // StableSocial GET /api/jobs uses x402 SIWX (not payment) when accepts is empty.
+  if (typeof signInWithX === 'string' && signInWithX.length > 0) {
+    headers['sign-in-with-x'] = signInWithX
+  }
   return headers
+}
+
+/** Tempo network selector from JSON body (same convention as battle/coaching/beats). */
+function normalizeTempoNetworkFromBody(body) {
+  const n = body?.network
+  if (n === 'testnet' || n === 42431 || n === '42431') return { network: 'testnet', chainId: 42431 }
+  if (n === 'mainnet' || n === 4217 || n === '4217') return { network: 'mainnet', chainId: 4217 }
+  return { network: 'mainnet', chainId: 4217 }
+}
+
+/** Per-flow Tempo MPP charge (decimal string) for `/api/dance-extras/live/...` */
+const DANCE_EXTRA_LIVE_AMOUNTS = {
+  'judge-score': '0.01',
+  'cypher-micropot': '0.02',
+  'clip-sale': '0.05',
+  reputation: '0.01',
+  'ai-usage': '0.02',
+  'bot-action': '0.03',
+  'fan-pass': '0.04',
+}
+
+/**
+ * Shared scaffold logic for the seven hub “extra” DanceTech flows (also used by live MPP route).
+ * @returns {{ ok: true, status: number, result: object } | { ok: false, status: number, error: string }}
+ */
+function executeDanceExtraFlow(flowKey, body) {
+  const tempoNet = normalizeTempoNetworkFromBody(body ?? {})
+  switch (flowKey) {
+    case 'judge-score': {
+      const { battleId, roundId, judgeId, dancerId, score } = body ?? {}
+      if (
+        typeof battleId !== 'string' ||
+        typeof roundId !== 'string' ||
+        typeof judgeId !== 'string' ||
+        typeof dancerId !== 'string' ||
+        typeof score !== 'number'
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: 'Invalid payload. Expected battleId, roundId, judgeId, dancerId (strings) and score (number).',
+        }
+      }
+      const entry = {
+        id: judgeScores.length + 1,
+        battleId,
+        roundId,
+        judgeId,
+        dancerId,
+        score,
+        createdAt: new Date().toISOString(),
+      }
+      judgeScores.push(entry)
+      const receipt = Receipt.from({
+        method: 'tempo',
+        reference: `mock_score_${battleId}_${roundId}_${judgeId}_${dancerId}`,
+        status: 'success',
+        timestamp: entry.createdAt,
+        externalId: `score_${entry.id}`,
+      })
+      return {
+        ok: true,
+        status: 201,
+        result: { ...entry, receipt, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    case 'cypher-micropot': {
+      const { cypherId, dancerId, amount } = body ?? {}
+      if (typeof cypherId !== 'string' || typeof dancerId !== 'string' || typeof amount !== 'number') {
+        return {
+          ok: false,
+          status: 400,
+          error: 'Invalid payload. Expected cypherId, dancerId (strings) and amount (number).',
+        }
+      }
+      const pot =
+        cypherMicropots.get(cypherId) ??
+        {
+          cypherId,
+          total: 0,
+          contributions: [],
+        }
+      const contribution = {
+        dancerId,
+        amount,
+        contributedAt: new Date().toISOString(),
+      }
+      pot.total += amount
+      pot.contributions.push(contribution)
+      cypherMicropots.set(cypherId, pot)
+      return {
+        ok: true,
+        status: 201,
+        result: { ...pot, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    case 'clip-sale': {
+      const { clipId, buyerId, totalAmount, splits } = body ?? {}
+      if (typeof clipId !== 'string' || typeof buyerId !== 'string') {
+        return { ok: false, status: 400, error: 'Invalid payload. Expected clipId and buyerId as strings.' }
+      }
+      if (!Array.isArray(splits) || splits.length === 0) {
+        return { ok: false, status: 400, error: 'Invalid payload. Expected non-empty splits[].' }
+      }
+      const saleId = `clip_${clipId}_${Date.now()}`
+      const createdAt = new Date().toISOString()
+      const receipt = Receipt.from({
+        method: 'tempo',
+        reference: `mock_clip_${clipId}_${saleId}`,
+        status: 'success',
+        timestamp: createdAt,
+        externalId: saleId,
+      })
+      const sale = {
+        saleId,
+        clipId,
+        buyerId,
+        totalAmount,
+        splits,
+        createdAt,
+        receipt,
+      }
+      clipSales.set(saleId, sale)
+      return {
+        ok: true,
+        status: 201,
+        result: { ...sale, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    case 'reputation': {
+      const { issuerId, dancerId, type, eventId } = body ?? {}
+      if (typeof issuerId !== 'string' || typeof dancerId !== 'string' || typeof type !== 'string') {
+        return {
+          ok: false,
+          status: 400,
+          error: 'Invalid payload. Expected issuerId, dancerId, type as strings.',
+        }
+      }
+      const attestation = {
+        id: reputationAttestations.length + 1,
+        issuerId,
+        dancerId,
+        type,
+        eventId: typeof eventId === 'string' ? eventId : null,
+        createdAt: new Date().toISOString(),
+      }
+      reputationAttestations.push(attestation)
+      const receipt = Receipt.from({
+        method: 'tempo',
+        reference: `mock_reputation_${attestation.id}`,
+        status: 'success',
+        timestamp: attestation.createdAt,
+        externalId: `reputation_${attestation.id}`,
+      })
+      return {
+        ok: true,
+        status: 201,
+        result: { ...attestation, receipt, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    case 'ai-usage': {
+      const { studioId, toolId, units, mode } = body ?? {}
+      if (typeof studioId !== 'string' || typeof toolId !== 'string' || typeof units !== 'number') {
+        return {
+          ok: false,
+          status: 400,
+          error: 'Invalid payload. Expected studioId, toolId (strings) and units (number).',
+        }
+      }
+      const entry = {
+        id: studioUsageEvents.length + 1,
+        studioId,
+        toolId,
+        units,
+        mode: mode === 'session' ? 'session' : 'charge',
+        createdAt: new Date().toISOString(),
+      }
+      studioUsageEvents.push(entry)
+      const receipt = Receipt.from({
+        method: 'tempo',
+        reference: `mock_ai_${entry.toolId}_${entry.id}`,
+        status: 'success',
+        timestamp: entry.createdAt,
+        externalId: `ai_${entry.id}`,
+      })
+      return {
+        ok: true,
+        status: 201,
+        result: { ...entry, receipt, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    case 'bot-action': {
+      const { eventId, actionType, payload } = body ?? {}
+      if (typeof eventId !== 'string' || typeof actionType !== 'string') {
+        return { ok: false, status: 400, error: 'Invalid payload. Expected eventId and actionType as strings.' }
+      }
+      const action = {
+        id: botActions.length + 1,
+        eventId,
+        actionType,
+        payload: payload ?? {},
+        createdAt: new Date().toISOString(),
+      }
+      botActions.push(action)
+      const receipt = Receipt.from({
+        method: 'tempo',
+        reference: `mock_bot_${eventId}_${action.id}`,
+        status: 'success',
+        timestamp: action.createdAt,
+        externalId: `bot_${action.id}`,
+      })
+      return {
+        ok: true,
+        status: 201,
+        result: { ...action, receipt, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    case 'fan-pass': {
+      const { fanId, tier } = body ?? {}
+      if (typeof fanId !== 'string') {
+        return { ok: false, status: 400, error: 'Invalid payload. Expected fanId as a string.' }
+      }
+      const passId = `pass_${fanId}_${Date.now()}`
+      const createdAt = new Date().toISOString()
+      const receipt = Receipt.from({
+        method: 'tempo',
+        reference: `mock_pass_${fanId}_${passId}`,
+        status: 'success',
+        timestamp: createdAt,
+        externalId: passId,
+      })
+      const pass = {
+        passId,
+        fanId,
+        tier: typeof tier === 'string' ? tier : 'standard',
+        createdAt,
+        perks: ['livestream_chat', 'backstage_qna', 'discounts'],
+        receipt,
+      }
+      fanPasses.set(passId, pass)
+      return {
+        ok: true,
+        status: 201,
+        result: { ...pass, network: tempoNet.network, chainId: tempoNet.chainId },
+      }
+    }
+    default:
+      return { ok: false, status: 400, error: 'Unknown dance extra flow.' }
+  }
 }
 
 app.get('/api/health', (_req, res) => {
@@ -880,213 +1158,39 @@ app.post('/api/beats/:id/grant-access', (req, res) => {
 })
 
 app.post('/api/judges/score', (req, res) => {
-  const { battleId, roundId, judgeId, dancerId, score } = req.body ?? {}
-
-  if (
-    typeof battleId !== 'string' ||
-    typeof roundId !== 'string' ||
-    typeof judgeId !== 'string' ||
-    typeof dancerId !== 'string' ||
-    typeof score !== 'number'
-  ) {
-    return res.status(400).json({
-      error:
-        'Invalid payload. Expected battleId, roundId, judgeId, dancerId (strings) and score (number).',
-    })
-  }
-
-  const entry = {
-    id: judgeScores.length + 1,
-    battleId,
-    roundId,
-    judgeId,
-    dancerId,
-    score,
-    createdAt: new Date().toISOString(),
-  }
-  judgeScores.push(entry)
-
-  const receipt = Receipt.from({
-    method: 'tempo',
-    reference: `mock_score_${battleId}_${roundId}_${judgeId}_${dancerId}`,
-    status: 'success',
-    timestamp: entry.createdAt,
-    externalId: `score_${entry.id}`,
-  })
-
-  return res.status(201).json({ ...entry, receipt })
+  const r = executeDanceExtraFlow('judge-score', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
 })
 
 app.post('/api/cypher/micropot/contribute', (req, res) => {
-  const { cypherId, dancerId, amount } = req.body ?? {}
-
-  if (
-    typeof cypherId !== 'string' ||
-    typeof dancerId !== 'string' ||
-    typeof amount !== 'number'
-  ) {
-    return res.status(400).json({
-      error:
-        'Invalid payload. Expected cypherId, dancerId (strings) and amount (number).',
-    })
-  }
-
-  const pot =
-    cypherMicropots.get(cypherId) ??
-    {
-      cypherId,
-      total: 0,
-      contributions: [],
-    }
-
-  const contribution = {
-    dancerId,
-    amount,
-    contributedAt: new Date().toISOString(),
-  }
-  pot.total += amount
-  pot.contributions.push(contribution)
-  cypherMicropots.set(cypherId, pot)
-
-  return res.status(201).json(pot)
+  const r = executeDanceExtraFlow('cypher-micropot', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
 })
 
 app.post('/api/clips/sale', (req, res) => {
-  const { clipId, buyerId, totalAmount, splits } = req.body ?? {}
-
-  if (typeof clipId !== 'string' || typeof buyerId !== 'string') {
-    return res.status(400).json({
-      error: 'Invalid payload. Expected clipId and buyerId as strings.',
-    })
-  }
-
-  if (!Array.isArray(splits) || splits.length === 0) {
-    return res.status(400).json({
-      error: 'Invalid payload. Expected non-empty splits[].',
-    })
-  }
-
-  const saleId = `clip_${clipId}_${Date.now()}`
-  const createdAt = new Date().toISOString()
-
-  const receipt = Receipt.from({
-    method: 'tempo',
-    reference: `mock_clip_${clipId}_${saleId}`,
-    status: 'success',
-    timestamp: createdAt,
-    externalId: saleId,
-  })
-
-  const sale = {
-    saleId,
-    clipId,
-    buyerId,
-    totalAmount,
-    splits,
-    createdAt,
-    receipt,
-  }
-
-  clipSales.set(saleId, sale)
-  return res.status(201).json(sale)
+  const r = executeDanceExtraFlow('clip-sale', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
 })
 
 app.post('/api/reputation/attest', (req, res) => {
-  const { issuerId, dancerId, type, eventId } = req.body ?? {}
-
-  if (
-    typeof issuerId !== 'string' ||
-    typeof dancerId !== 'string' ||
-    typeof type !== 'string'
-  ) {
-    return res.status(400).json({
-      error: 'Invalid payload. Expected issuerId, dancerId, type as strings.',
-    })
-  }
-
-  const attestation = {
-    id: reputationAttestations.length + 1,
-    issuerId,
-    dancerId,
-    type,
-    eventId: typeof eventId === 'string' ? eventId : null,
-    createdAt: new Date().toISOString(),
-  }
-  reputationAttestations.push(attestation)
-
-  const receipt = Receipt.from({
-    method: 'tempo',
-    reference: `mock_reputation_${attestation.id}`,
-    status: 'success',
-    timestamp: attestation.createdAt,
-    externalId: `reputation_${attestation.id}`,
-  })
-
-  return res.status(201).json({ ...attestation, receipt })
+  const r = executeDanceExtraFlow('reputation', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
 })
 
 app.post('/api/studio/ai-usage', (req, res) => {
-  const { studioId, toolId, units, mode } = req.body ?? {}
-
-  if (
-    typeof studioId !== 'string' ||
-    typeof toolId !== 'string' ||
-    typeof units !== 'number'
-  ) {
-    return res.status(400).json({
-      error:
-        'Invalid payload. Expected studioId, toolId (strings) and units (number).',
-    })
-  }
-
-  const entry = {
-    id: studioUsageEvents.length + 1,
-    studioId,
-    toolId,
-    units,
-    mode: mode === 'session' ? 'session' : 'charge',
-    createdAt: new Date().toISOString(),
-  }
-  studioUsageEvents.push(entry)
-
-  const receipt = Receipt.from({
-    method: 'tempo',
-    reference: `mock_ai_${entry.toolId}_${entry.id}`,
-    status: 'success',
-    timestamp: entry.createdAt,
-    externalId: `ai_${entry.id}`,
-  })
-
-  return res.status(201).json({ ...entry, receipt })
+  const r = executeDanceExtraFlow('ai-usage', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
 })
 
 app.post('/api/bot/action', (req, res) => {
-  const { eventId, actionType, payload } = req.body ?? {}
-
-  if (typeof eventId !== 'string' || typeof actionType !== 'string') {
-    return res.status(400).json({
-      error: 'Invalid payload. Expected eventId and actionType as strings.',
-    })
-  }
-
-  const action = {
-    id: botActions.length + 1,
-    eventId,
-    actionType,
-    payload: payload ?? {},
-    createdAt: new Date().toISOString(),
-  }
-  botActions.push(action)
-
-  const receipt = Receipt.from({
-    method: 'tempo',
-    reference: `mock_bot_${eventId}_${action.id}`,
-    status: 'success',
-    timestamp: action.createdAt,
-    externalId: `bot_${action.id}`,
-  })
-
-  return res.status(201).json({ ...action, receipt })
+  const r = executeDanceExtraFlow('bot-action', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
 })
 
 app.post('/api/ops/agentmail/send', async (req, res) => {
@@ -1302,36 +1406,58 @@ app.post('/api/ops/agentmail/inbox/create', async (req, res) => {
 })
 
 app.post('/api/fan-pass/purchase', (req, res) => {
-  const { fanId, tier } = req.body ?? {}
+  const r = executeDanceExtraFlow('fan-pass', req.body ?? {})
+  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  return res.status(r.status).json(r.result)
+})
 
-  if (typeof fanId !== 'string') {
+/** GET — verify this server build exposes live dance-extras (useful when debugging 404 from stale `npm run server`). */
+app.get('/api/dance-extras/live', (_req, res) => {
+  res.json({
+    ok: true,
+    method: 'POST',
+    path: '/api/dance-extras/live/:flowKey/:network',
+    flowKeys: Object.keys(DANCE_EXTRA_LIVE_AMOUNTS),
+    networks: ['testnet', 'mainnet'],
+  })
+})
+
+/**
+ * Wallet-paid Tempo MPP (x402) for the seven DanceTech “extra” flows — charges then runs the same scaffold as mock routes.
+ * Body: same JSON as the corresponding `/api/...` route; `network` in the URL overrides body for Tempo chain selection.
+ */
+app.post('/api/dance-extras/live/:flowKey/:networkParam', async (req, res) => {
+  const network = req.params.networkParam === 'mainnet' ? 'mainnet' : 'testnet'
+  const flowKey = req.params.flowKey
+  if (!DANCE_EXTRA_LIVE_AMOUNTS[flowKey]) {
+    return res.status(400).json({ error: 'Invalid flowKey for live MPP.' })
+  }
+  const amount = DANCE_EXTRA_LIVE_AMOUNTS[flowKey]
+  const mppx = liveMppByNetwork[network]
+  try {
+    const handler = mppx.tempo.charge({
+      amount,
+      description: `DanceTech ${flowKey}`,
+      externalId: `dance_extra_${flowKey}_${Date.now()}`,
+    })
+    const mppResponse = await handler(toFetchRequest(req))
+    if (mppResponse.status === 402) return sendFetchResponse(res, mppResponse.challenge)
+
+    const body = { ...(req.body ?? {}), network }
+    const r = executeDanceExtraFlow(flowKey, body)
+    if (!r.ok) {
+      return sendFetchResponse(res, Response.json({ error: r.error }, { status: r.status }))
+    }
+    const successResponse = mppResponse.withReceipt(
+      Response.json({ ...r.result, mpp: true, livePayment: true }),
+    )
+    return sendFetchResponse(res, successResponse)
+  } catch (error) {
     return res.status(400).json({
-      error: 'Invalid payload. Expected fanId as a string.',
+      error: 'Dance extra live payment failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
     })
   }
-
-  const passId = `pass_${fanId}_${Date.now()}`
-  const createdAt = new Date().toISOString()
-
-  const receipt = Receipt.from({
-    method: 'tempo',
-    reference: `mock_pass_${fanId}_${passId}`,
-    status: 'success',
-    timestamp: createdAt,
-    externalId: passId,
-  })
-
-  const pass = {
-    passId,
-    fanId,
-    tier: typeof tier === 'string' ? tier : 'standard',
-    createdAt,
-    perks: ['livestream_chat', 'backstage_qna', 'discounts'],
-    receipt,
-  }
-
-  fanPasses.set(passId, pass)
-  return res.status(201).json(pass)
 })
 
 app.post('/api/token/tip20/launch', (req, res) => {
@@ -1417,7 +1543,9 @@ app.post('/api/travel/stable/flights-search', async (req, res) => {
   const url = `https://stabletravel.dev/api/flights/search?${search.toString()}`
 
   try {
-    const response = await fetch(url, { method: 'GET' })
+    // Forward MPP/x402 payment headers from the client POST so paid retries succeed.
+    const forwardHeaders = getForwardAuthHeaders(req)
+    const response = await fetch(url, { method: 'GET', headers: forwardHeaders })
     // StableTravel uses x402/MPP. Preserve upstream `402` challenge so the frontend
     // can solve it via `mppx` (Tempo MPP wallet flow).
     if (response.status === 402) return sendFetchResponse(res, response)
@@ -1553,14 +1681,26 @@ app.post('/api/travel/googlemaps/geocode', async (req, res) => {
   }
 })
 
+let warnedLegacyOpenWeatherPath = false
+function resolveOpenWeatherCurrentPath() {
+  const raw = process.env.OPENWEATHER_CURRENT_PATH || '/openweather/current-weather'
+  const normalized = raw.startsWith('/') ? raw : `/${raw}`
+  // MPP catalog: POST /openweather/current-weather (not legacy OpenWeather GET /data/2.5/weather).
+  if (normalized === '/data/2.5/weather') {
+    if (!warnedLegacyOpenWeatherPath) {
+      warnedLegacyOpenWeatherPath = true
+      console.warn(
+        '[openweather] OPENWEATHER_CURRENT_PATH=/data/2.5/weather is not valid on weather.mpp.paywithlocus.com — using /openweather/current-weather. Update .env.',
+      )
+    }
+    return '/openweather/current-weather'
+  }
+  return normalized
+}
+
 app.post('/api/travel/openweather/current', async (req, res) => {
   const { lat, lon, units } = req.body ?? {}
   const apiKey = process.env.OPENWEATHER_API_KEY
-  if (!apiKey) {
-    return res.status(500).json({
-      error: 'OPENWEATHER_API_KEY is not set on the server.',
-    })
-  }
 
   const latNum = Number(lat)
   const lonNum = Number(lon)
@@ -1571,18 +1711,29 @@ app.post('/api/travel/openweather/current', async (req, res) => {
   }
 
   const baseUrl = process.env.OPENWEATHER_BASE_URL || 'https://weather.mpp.paywithlocus.com'
-  const weatherPath = process.env.OPENWEATHER_CURRENT_PATH || '/data/2.5/weather'
+  const weatherPath = resolveOpenWeatherCurrentPath()
   const endpoint = `${baseUrl.replace(/\/$/, '')}${weatherPath.startsWith('/') ? weatherPath : `/${weatherPath}`}`
-  const params = new URLSearchParams({
-    lat: String(latNum),
-    lon: String(lonNum),
-    appid: apiKey,
-  })
-  if (typeof units === 'string' && units.trim()) params.set('units', units.trim())
-  const url = `${endpoint}?${params.toString()}`
+
+  const payload = {
+    lat: latNum,
+    lon: lonNum,
+  }
+  if (typeof units === 'string' && units.trim()) payload.units = units.trim()
+  if (typeof apiKey === 'string' && apiKey.trim()) payload.appid = apiKey.trim()
 
   try {
-    const response = await fetch(url, { method: 'GET' })
+    const forwardHeaders = getForwardAuthHeaders(req)
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...forwardHeaders,
+      },
+      body: JSON.stringify(payload),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
     const raw = await response.text()
     let data = null
     try {
@@ -1591,24 +1742,19 @@ app.post('/api/travel/openweather/current', async (req, res) => {
       data = null
     }
 
-    if (response.status === 402) {
-      return res.status(402).json({
-        error: 'OpenWeather payment required (MPP challenge).',
-        details:
-          'Use an MPP-capable client/wallet flow for paid access to weather endpoint.',
-        endpoint: url,
-        upstream: data ?? raw,
-      })
-    }
-
     if (!response.ok) {
       return res.status(response.status).json({
         error: 'OpenWeather request failed.',
         details: data ?? raw,
+        upstreamEndpoint: endpoint,
+        hint:
+          !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+            ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set OPENWEATHER_API_KEY on the server.'
+            : undefined,
       })
     }
 
-    return res.json({
+    return res.status(response.status).json({
       provider: 'openweather',
       endpoint,
       result: data ?? raw,
@@ -1686,14 +1832,27 @@ app.post('/api/market/kicksdb/search', async (req, res) => {
   }
 })
 
-app.post('/api/music/suno/generate', async (req, res) => {
-  const { prompt, style, duration } = req.body ?? {}
-  const apiKey = process.env.SUNO_API_KEY
-  if (!apiKey) {
-    return res.status(500).json({
-      error: 'SUNO_API_KEY is not set on the server.',
-    })
+/** MPP Suno catalog uses POST /suno/generate-music (not /api/generate). */
+let warnedLegacySunoGeneratePath = false
+function resolveSunoGeneratePath() {
+  const raw = process.env.SUNO_GENERATE_PATH || '/suno/generate-music'
+  const normalized = raw.startsWith('/') ? raw : `/${raw}`
+  if (normalized === '/api/generate') {
+    if (!warnedLegacySunoGeneratePath) {
+      warnedLegacySunoGeneratePath = true
+      console.warn(
+        '[suno] SUNO_GENERATE_PATH=/api/generate is not valid on suno.mpp.paywithlocus.com — using /suno/generate-music. Update .env and restart.',
+      )
+    }
+    return '/suno/generate-music'
   }
+  return normalized
+}
+
+const SUNO_GENERATE_MODELS = new Set(['V4', 'V4_5', 'V4_5ALL', 'V4_5PLUS', 'V5'])
+
+app.post('/api/music/suno/generate', async (req, res) => {
+  const { prompt, style, duration, customMode, instrumental, model } = req.body ?? {}
 
   if (typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({
@@ -1701,23 +1860,40 @@ app.post('/api/music/suno/generate', async (req, res) => {
     })
   }
 
+  /** Suno MPP `generate-music` requires this flag (simple prompt vs custom lyrics/style flow). */
+  const customModeBool = typeof customMode === 'boolean' ? customMode : false
+  /** true = no vocals / instrumental track (Suno API requires the boolean). */
+  const instrumentalBool = typeof instrumental === 'boolean' ? instrumental : false
+  /** Upstream: model is required — must be one of V4, V4_5, … */
+  const modelTrim = typeof model === 'string' ? model.trim() : ''
+  const modelResolved = SUNO_GENERATE_MODELS.has(modelTrim) ? modelTrim : 'V5'
+
   const baseUrl = process.env.SUNO_BASE_URL || 'https://suno.mpp.paywithlocus.com'
-  const generatePath = process.env.SUNO_GENERATE_PATH || '/api/generate'
+  const generatePath = resolveSunoGeneratePath()
   const endpoint = `${baseUrl.replace(/\/$/, '')}${generatePath.startsWith('/') ? generatePath : `/${generatePath}`}`
 
   try {
+    const forwardHeaders = getForwardAuthHeaders(req)
+    const headers = {
+      'Content-Type': 'application/json',
+      ...forwardHeaders,
+    }
+
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         prompt: prompt.trim(),
+        customMode: customModeBool,
+        instrumental: instrumentalBool,
+        model: modelResolved,
         ...(typeof style === 'string' && style.trim() ? { style: style.trim() } : {}),
         ...(Number.isFinite(Number(duration)) ? { duration: Number(duration) } : {}),
       }),
     })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
     const raw = await response.text()
     let data = null
     try {
@@ -1726,24 +1902,20 @@ app.post('/api/music/suno/generate', async (req, res) => {
       data = null
     }
 
-    if (response.status === 402) {
-      return res.status(402).json({
-        error: 'Suno payment required (MPP challenge).',
-        details:
-          'Use an MPP-capable client/wallet flow for paid Suno endpoint access.',
-        endpoint,
-        upstream: data ?? raw,
-      })
-    }
-
     if (!response.ok) {
       return res.status(response.status).json({
         error: 'Suno request failed.',
         details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint:
+          !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+            ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP) when prompted.'
+            : undefined,
       })
     }
 
-    return res.status(201).json({
+    return res.status(response.status).json({
       provider: 'suno',
       endpoint,
       result: data ?? raw,
@@ -1754,6 +1926,84 @@ app.post('/api/music/suno/generate', async (req, res) => {
       details: error instanceof Error ? error.message : 'Unknown error',
     })
   }
+})
+
+function parallelUpstreamBase() {
+  return (process.env.PARALLEL_BASE_URL || 'https://parallelmpp.dev').replace(/\/$/, '')
+}
+
+/**
+ * Parallel (web search / extract / task) via MPP — https://parallelmpp.dev
+ * Paid POSTs return 402 until wallet pays; GET task poll is free upstream.
+ */
+async function proxyParallelRequest(req, res, { path: upstreamPath, method = 'POST', jsonBody }) {
+  const endpoint = `${parallelUpstreamBase()}${upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`}`
+  try {
+    const forwardHeaders = getForwardAuthHeaders(req)
+    const headers = {
+      ...forwardHeaders,
+    }
+    if (method !== 'GET') {
+      headers['Content-Type'] = 'application/json'
+    }
+
+    const response = await fetch(endpoint, {
+      method,
+      headers,
+      body: method === 'GET' ? undefined : JSON.stringify(jsonBody ?? {}),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'Parallel request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint:
+          method !== 'GET' && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+            ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP) when prompted.'
+            : undefined,
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'parallel',
+      endpoint,
+      result: data ?? raw,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Parallel integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.post('/api/parallel/search', (req, res) =>
+  proxyParallelRequest(req, res, { path: '/api/search', method: 'POST', jsonBody: req.body ?? {} }),
+)
+
+app.post('/api/parallel/extract', (req, res) =>
+  proxyParallelRequest(req, res, { path: '/api/extract', method: 'POST', jsonBody: req.body ?? {} }),
+)
+
+app.post('/api/parallel/task', (req, res) =>
+  proxyParallelRequest(req, res, { path: '/api/task', method: 'POST', jsonBody: req.body ?? {} }),
+)
+
+app.get('/api/parallel/task/:runId', (req, res) => {
+  const runId = encodeURIComponent(String(req.params.runId ?? ''))
+  return proxyParallelRequest(req, res, { path: `/api/task/${runId}`, method: 'GET', jsonBody: null })
 })
 
 app.post('/api/ops/stablephone/call', async (req, res) => {
@@ -1782,22 +2032,16 @@ app.post('/api/ops/stablephone/call', async (req, res) => {
         ...(typeof voice === 'string' && voice.trim() ? { voice: voice.trim() } : {}),
       }),
     })
+
+    // Preserve x402 challenge for `mppx` (same pattern as StableTravel / AgentMail).
+    if (response.status === 402) return sendFetchResponse(res, response)
+
     const raw = await response.text()
     let data = null
     try {
       data = raw ? JSON.parse(raw) : null
     } catch {
       data = null
-    }
-
-    if (response.status === 402) {
-      return res.status(402).json({
-        error: 'StablePhone payment required (x402/MPP challenge).',
-        details:
-          'Use an MPP-capable client/wallet flow for paid StablePhone call initiation.',
-        endpoint,
-        upstream: data ?? raw,
-      })
     }
 
     if (!response.ok) {
@@ -1837,6 +2081,9 @@ app.get('/api/ops/stablephone/call/:id', async (req, res) => {
         ...getForwardAuthHeaders(req),
       },
     })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
     const raw = await response.text()
     let data = null
     try {
@@ -1866,10 +2113,17 @@ app.get('/api/ops/stablephone/call/:id', async (req, res) => {
 })
 
 app.post('/api/social/stablesocial/instagram-profile', async (req, res) => {
-  const { username } = req.body ?? {}
-  if (typeof username !== 'string' || !username.trim()) {
+  // StableSocial OpenAPI: POST /api/instagram/profile expects `{ "handle": "..." }` (not `username`).
+  const { username, handle } = req.body ?? {}
+  const trimmedHandle =
+    typeof handle === 'string' && handle.trim()
+      ? handle.trim()
+      : typeof username === 'string' && username.trim()
+        ? username.trim()
+        : ''
+  if (!trimmedHandle) {
     return res.status(400).json({
-      error: 'Invalid payload. Expected username as a non-empty string.',
+      error: 'Invalid payload. Expected `handle` or `username` as a non-empty string.',
     })
   }
 
@@ -1879,13 +2133,18 @@ app.post('/api/social/stablesocial/instagram-profile', async (req, res) => {
   const endpoint = `${baseUrl.replace(/\/$/, '')}${profilePath.startsWith('/') ? profilePath : `/${profilePath}`}`
 
   try {
+    const forwardHeaders = getForwardAuthHeaders(req)
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...forwardHeaders,
       },
-      body: JSON.stringify({ username: username.trim() }),
+      body: JSON.stringify({ handle: trimmedHandle }),
     })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
     const raw = await response.text()
     let data = null
     try {
@@ -1894,24 +2153,16 @@ app.post('/api/social/stablesocial/instagram-profile', async (req, res) => {
       data = null
     }
 
-    if (response.status === 402) {
-      return res.status(402).json({
-        error: 'StableSocial payment required (x402/MPP challenge).',
-        details:
-          'Use an MPP-capable client/wallet flow for paid StableSocial fetch endpoints.',
-        endpoint,
-        upstream: data ?? raw,
-      })
-    }
-
     if (!response.ok) {
       return res.status(response.status).json({
         error: 'StableSocial request failed.',
         details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
       })
     }
 
-    return res.status(201).json({
+    return res.status(response.status).json({
       provider: 'stablesocial',
       endpoint,
       result: data ?? raw,
@@ -1944,6 +2195,9 @@ app.get('/api/social/stablesocial/jobs', async (req, res) => {
         ...getForwardAuthHeaders(req),
       },
     })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
     const raw = await response.text()
     let data = null
     try {
@@ -1953,13 +2207,22 @@ app.get('/api/social/stablesocial/jobs', async (req, res) => {
     }
 
     if (!response.ok) {
+      const hints = []
+      if (response.status === 401 || response.status === 403) {
+        hints.push('SIWX must be from the same wallet that paid for the job token.')
+      }
+      // https://stablesocial.dev/llms.txt — "502 — Upstream data collection failed"
+      if (response.status === 502) {
+        hints.push(
+          'StableSocial reports upstream data collection failed — retry poll later or trigger a new job.',
+        )
+      }
       return res.status(response.status).json({
         error: 'StableSocial jobs poll failed.',
         details: data ?? raw,
-        hint:
-          response.status === 401 || response.status === 403
-            ? 'StableSocial jobs polling requires SIWX wallet auth from the same paying wallet.'
-            : undefined,
+        upstreamStatus: response.status,
+        upstreamEndpoint: url,
+        hint: hints.length ? hints.join(' ') : undefined,
       })
     }
 
@@ -2347,6 +2610,716 @@ app.get('/api/card/:id', async (req, res) => {
   }
 })
 
+function openAiMppBaseUrl() {
+  return (process.env.OPENAI_MPP_BASE_URL || 'https://openai.mpp.tempo.xyz').replace(/\/$/, '')
+}
+
+function openAiMppAuthHeaders(req) {
+  const apiKey = process.env.OPENAI_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+  return headers
+}
+
+function openAiMppPaymentHint(req) {
+  const apiKey = process.env.OPENAI_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set OPENAI_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * OpenAI MPP JSON POST proxy (chat, images, …).
+ * @see https://mpp.dev/services — OpenAI on Tempo
+ */
+async function proxyOpenAiMppJson(req, res, upstreamPath, jsonBody) {
+  const endpoint = `${openAiMppBaseUrl()}${upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`}`
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...openAiMppAuthHeaders(req),
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(jsonBody ?? {}),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'OpenAI MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: openAiMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'openai-mpp',
+      endpoint,
+      result: data ?? raw,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'OpenAI MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.post('/api/openai/chat/completions', (req, res) =>
+  proxyOpenAiMppJson(req, res, '/v1/chat/completions', req.body ?? {}),
+)
+
+app.post('/api/openai/images/generations', (req, res) =>
+  proxyOpenAiMppJson(req, res, '/v1/images/generations', req.body ?? {}),
+)
+
+/** Text-to-speech — upstream returns audio bytes; we wrap as base64 JSON for the browser. */
+app.post('/api/openai/audio/speech', async (req, res) => {
+  const endpoint = `${openAiMppBaseUrl()}/v1/audio/speech`
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...openAiMppAuthHeaders(req),
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(req.body ?? {}),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const buf = Buffer.from(await response.arrayBuffer())
+    const ct = response.headers.get('content-type') || ''
+
+    if (!response.ok) {
+      let details = buf.toString('utf8')
+      try {
+        details = JSON.parse(details)
+      } catch {
+        /* keep string */
+      }
+      return res.status(response.status).json({
+        error: 'OpenAI MPP speech request failed.',
+        details,
+        upstreamEndpoint: endpoint,
+        hint: openAiMppPaymentHint(req),
+      })
+    }
+
+    if (ct.includes('application/json')) {
+      let data = null
+      try {
+        data = JSON.parse(buf.toString('utf8'))
+      } catch {
+        data = buf.toString('utf8')
+      }
+      return res.status(200).json({
+        provider: 'openai-mpp',
+        endpoint,
+        result: data,
+      })
+    }
+
+    const mime = ct.split(';')[0].trim() || 'audio/mpeg'
+    return res.status(200).json({
+      provider: 'openai-mpp',
+      endpoint,
+      result: {
+        mime,
+        audio_base64: buf.toString('base64'),
+      },
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'OpenAI MPP speech integration failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+})
+
+/** Whisper transcription — multipart file field `file` + `model`. */
+app.post('/api/openai/audio/transcriptions', openAiMppUpload.single('file'), async (req, res) => {
+  const endpoint = `${openAiMppBaseUrl()}/v1/audio/transcriptions`
+  const file = req.file
+  const model = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : 'whisper-1'
+
+  if (!file?.buffer) {
+    return res.status(400).json({
+      error: 'Missing audio file. Send multipart/form-data with field "file".',
+    })
+  }
+
+  try {
+    const form = new FormData()
+    form.append('file', new Blob([file.buffer]), file.originalname || 'audio.webm')
+    form.append('model', model)
+
+    const headers = openAiMppAuthHeaders(req)
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: form,
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'OpenAI MPP transcription request failed.',
+        details: data ?? raw,
+        upstreamEndpoint: endpoint,
+        hint: openAiMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'openai-mpp',
+      endpoint,
+      result: data ?? raw,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'OpenAI MPP transcription integration failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+})
+
+function anthropicMppBaseUrl() {
+  return (process.env.ANTHROPIC_MPP_BASE_URL || 'https://anthropic.mpp.tempo.xyz').replace(/\/$/, '')
+}
+
+/** Anthropic-native headers; MPP still uses Payment / Payment-Receipt from the browser when no key. */
+function anthropicMppAuthHeaders(req) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers['x-api-key'] = apiKey.trim()
+    headers['anthropic-version'] = process.env.ANTHROPIC_API_VERSION?.trim() || '2023-06-01'
+  }
+  return headers
+}
+
+function anthropicMppPaymentHint(req) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set ANTHROPIC_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * Anthropic MPP JSON POST proxy (Messages API + OpenAI-compatible chat).
+ * @see https://mpp.dev/services — Anthropic on Tempo
+ */
+async function proxyAnthropicMppJson(req, res, upstreamPath, jsonBody) {
+  const endpoint = `${anthropicMppBaseUrl()}${upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`}`
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...anthropicMppAuthHeaders(req),
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(jsonBody ?? {}),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'Anthropic MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: anthropicMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'anthropic-mpp',
+      endpoint,
+      result: data ?? raw,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Anthropic MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.post('/api/anthropic/v1/messages', (req, res) =>
+  proxyAnthropicMppJson(req, res, '/v1/messages', req.body ?? {}),
+)
+
+app.post('/api/anthropic/v1/chat/completions', (req, res) =>
+  proxyAnthropicMppJson(req, res, '/v1/chat/completions', req.body ?? {}),
+)
+
+function openRouterMppBaseUrl() {
+  return (process.env.OPENROUTER_MPP_BASE_URL || 'https://openrouter.mpp.tempo.xyz').replace(/\/$/, '')
+}
+
+/** OpenRouter uses Bearer auth; forward MPP payment headers from the browser when no key. */
+function openRouterMppAuthHeaders(req) {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+  return headers
+}
+
+function openRouterMppPaymentHint(req) {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set OPENROUTER_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * OpenRouter MPP JSON POST proxy (OpenAI-compatible chat).
+ * @see https://mpp.dev/services#openrouter
+ */
+async function proxyOpenRouterMppJson(req, res, upstreamPath, jsonBody) {
+  const endpoint = `${openRouterMppBaseUrl()}${upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`}`
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...openRouterMppAuthHeaders(req),
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(jsonBody ?? {}),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'OpenRouter MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: openRouterMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'openrouter-mpp',
+      endpoint,
+      result: data ?? raw,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'OpenRouter MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.post('/api/openrouter/v1/chat/completions', (req, res) =>
+  proxyOpenRouterMppJson(req, res, '/v1/chat/completions', req.body ?? {}),
+)
+
+function perplexityMppBaseUrl() {
+  return (process.env.PERPLEXITY_MPP_BASE_URL || 'https://perplexity.mpp.tempo.xyz').replace(/\/$/, '')
+}
+
+/** Perplexity uses Bearer auth; forward MPP payment headers from the browser when no key. */
+function perplexityMppAuthHeaders(req) {
+  const apiKey = process.env.PERPLEXITY_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+  return headers
+}
+
+function perplexityMppPaymentHint(req) {
+  const apiKey = process.env.PERPLEXITY_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set PERPLEXITY_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * Perplexity MPP JSON POST proxy (chat, search, embeddings).
+ * @see https://mpp.dev/services#perplexity
+ */
+async function proxyPerplexityMppJson(req, res, upstreamPath, jsonBody) {
+  const endpoint = `${perplexityMppBaseUrl()}${upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`}`
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...perplexityMppAuthHeaders(req),
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(jsonBody ?? {}),
+    })
+
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'Perplexity MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: perplexityMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'perplexity-mpp',
+      endpoint,
+      result: data ?? raw,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Perplexity MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.post('/api/perplexity/chat', (req, res) =>
+  proxyPerplexityMppJson(req, res, '/perplexity/chat', req.body ?? {}),
+)
+
+app.post('/api/perplexity/search', (req, res) =>
+  proxyPerplexityMppJson(req, res, '/perplexity/search', req.body ?? {}),
+)
+
+app.post('/api/perplexity/embed', (req, res) =>
+  proxyPerplexityMppJson(req, res, '/perplexity/embed', req.body ?? {}),
+)
+
+app.post('/api/perplexity/context-embed', (req, res) =>
+  proxyPerplexityMppJson(req, res, '/perplexity/context-embed', req.body ?? {}),
+)
+
+function alchemyMppBaseUrl() {
+  return (process.env.ALCHEMY_MPP_BASE_URL || 'https://mpp.alchemy.com').replace(/\/$/, '')
+}
+
+/** Alchemy MPP uses Bearer when ALCHEMY_API_KEY is set; otherwise forward MPP payment headers from the browser. */
+function alchemyMppAuthHeaders(req) {
+  const apiKey = process.env.ALCHEMY_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+  return headers
+}
+
+function alchemyMppPaymentHint(req) {
+  const apiKey = process.env.ALCHEMY_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set ALCHEMY_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * Alchemy MPP proxy — forwards to `/:network/v2` (JSON-RPC) and `/:network/nft/v3/...` (NFT API v3).
+ * Browser calls `/api/alchemy/...`; upstream path is the same without the `/api` prefix.
+ * @see https://mpp.dev/services#alchemy
+ */
+async function proxyAlchemyMpp(req, res) {
+  const suffix = req.url || '/'
+  const endpoint = `${alchemyMppBaseUrl()}${suffix.startsWith('/') ? suffix : `/${suffix}`}`
+  const method = (req.method || 'GET').toUpperCase()
+
+  const headers = { ...alchemyMppAuthHeaders(req) }
+  const fetchOpts = { method, headers }
+
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const payload = req.body !== undefined && req.body !== null ? req.body : {}
+    fetchOpts.headers = { ...headers, 'Content-Type': 'application/json' }
+    fetchOpts.body = JSON.stringify(payload)
+  }
+
+  try {
+    const response = await fetch(endpoint, fetchOpts)
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = raw
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'Alchemy MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: alchemyMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'alchemy-mpp',
+      endpoint,
+      result: data,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Alchemy MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.use('/api/alchemy', (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Allow', 'GET,HEAD,POST,OPTIONS')
+    return res.status(204).end()
+  }
+  return proxyAlchemyMpp(req, res)
+})
+
+function falMppBaseUrl() {
+  return (process.env.FAL_MPP_BASE_URL || 'https://fal.mpp.tempo.xyz').replace(/\/$/, '')
+}
+
+/** fal.ai MPP uses Bearer when FAL_API_KEY is set; otherwise forward MPP payment headers from the browser. */
+function falMppAuthHeaders(req) {
+  const apiKey = process.env.FAL_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+  return headers
+}
+
+function falMppPaymentHint(req) {
+  const apiKey = process.env.FAL_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set FAL_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * fal.ai MPP proxy — image / video / audio model endpoints (`POST /fal-ai/...`, `POST /xai/...`, etc.).
+ * Browser calls `/api/fal/...`; upstream path is the same without the `/api` prefix.
+ * @see https://mpp.dev/services#fal
+ */
+async function proxyFalMpp(req, res) {
+  const suffix = req.url || '/'
+  const endpoint = `${falMppBaseUrl()}${suffix.startsWith('/') ? suffix : `/${suffix}`}`
+  const method = (req.method || 'GET').toUpperCase()
+
+  const headers = { ...falMppAuthHeaders(req) }
+  const fetchOpts = { method, headers }
+
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const payload = req.body !== undefined && req.body !== null ? req.body : {}
+    fetchOpts.headers = { ...headers, 'Content-Type': 'application/json' }
+    fetchOpts.body = JSON.stringify(payload)
+  }
+
+  try {
+    const response = await fetch(endpoint, fetchOpts)
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = raw
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'fal MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: falMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'fal-mpp',
+      endpoint,
+      result: data,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'fal MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.use('/api/fal', (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Allow', 'GET,HEAD,POST,OPTIONS')
+    return res.status(204).end()
+  }
+  return proxyFalMpp(req, res)
+})
+
+function replicateMppBaseUrl() {
+  return (process.env.REPLICATE_MPP_BASE_URL || 'https://replicate.mpp.paywithlocus.com').replace(/\/$/, '')
+}
+
+/** Replicate MPP uses Bearer when REPLICATE_API_KEY is set; otherwise forward MPP payment headers from the browser. */
+function replicateMppAuthHeaders(req) {
+  const apiKey = process.env.REPLICATE_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  const headers = { ...forwardHeaders }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+  return headers
+}
+
+function replicateMppPaymentHint(req) {
+  const apiKey = process.env.REPLICATE_API_KEY
+  const forwardHeaders = getForwardAuthHeaders(req)
+  return !apiKey?.trim() && !forwardHeaders.Payment && !forwardHeaders['Payment-Receipt']
+    ? 'Connect wallet on Tempo mainnet and complete payment (x402 / MPP), or set REPLICATE_API_KEY on the server.'
+    : undefined
+}
+
+/**
+ * Replicate MPP proxy — `POST /replicate/run`, `/replicate/get-prediction`, `/replicate/get-model`, `/replicate/list-models`.
+ * Browser calls `/api/replicate/...`; upstream path is the same without the `/api` prefix.
+ * @see https://mpp.dev/services#replicate
+ */
+async function proxyReplicateMpp(req, res) {
+  const suffix = req.url || '/'
+  const endpoint = `${replicateMppBaseUrl()}${suffix.startsWith('/') ? suffix : `/${suffix}`}`
+  const method = (req.method || 'GET').toUpperCase()
+
+  const headers = { ...replicateMppAuthHeaders(req) }
+  const fetchOpts = { method, headers }
+
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const payload = req.body !== undefined && req.body !== null ? req.body : {}
+    fetchOpts.headers = { ...headers, 'Content-Type': 'application/json' }
+    fetchOpts.body = JSON.stringify(payload)
+  }
+
+  try {
+    const response = await fetch(endpoint, fetchOpts)
+    if (response.status === 402) return sendFetchResponse(res, response)
+
+    const raw = await response.text()
+    let data = null
+    try {
+      data = raw ? JSON.parse(raw) : null
+    } catch {
+      data = raw
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'Replicate MPP request failed.',
+        details: data ?? raw,
+        upstreamStatus: response.status,
+        upstreamEndpoint: endpoint,
+        hint: replicateMppPaymentHint(req),
+      })
+    }
+
+    return res.status(response.status).json({
+      provider: 'replicate-mpp',
+      endpoint,
+      result: data,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Replicate MPP integration request failed.',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+}
+
+app.use('/api/replicate', (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Allow', 'GET,HEAD,POST,OPTIONS')
+    return res.status(204).end()
+  }
+  return proxyReplicateMpp(req, res)
+})
+
 app.post('/api/ai/explain-flow', async (req, res) => {
   const apiKey = process.env.OPENAI_API_KEY
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
@@ -2427,5 +3400,6 @@ app.post('/api/ai/explain-flow', async (req, res) => {
 })
 
 app.listen(port, () => {
-  console.log(`AI proxy listening on http://localhost:${port}`)
+  console.log(`API server listening on http://localhost:${port}`)
+  console.log(`  Dance extras (live MPP): POST /api/dance-extras/live/:flowKey/:network  (GET /api/dance-extras/live to verify)`)
 })

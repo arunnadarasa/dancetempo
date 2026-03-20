@@ -1,7 +1,12 @@
 import { useState } from 'react'
 import { Mppx as MppxClient, tempo as tempoClient } from 'mppx/client'
-import { createWalletClient, custom } from 'viem'
-import { tempo as tempoMainnet, tempoModerato } from 'viem/chains'
+import {
+  type BrowserEthereumProvider,
+  TEMPO_MPP_SESSION_MAX_DEPOSIT,
+  tempoBrowserWalletTransport,
+} from './tempoMpp'
+import { createWalletClient } from 'viem'
+import { tempo as tempoMainnet } from 'viem/chains'
 import { tempoActions } from 'viem/tempo'
 import './App.css'
 
@@ -19,14 +24,6 @@ const shortValue = (value: string, keep = 34) => {
   if (value.length <= keep) return value
   return `${value.slice(0, keep)}...`
 }
-
-type Network = 'testnet' | 'mainnet'
-
-const tempoTestnetChain = tempoModerato.extend({
-  nativeCurrency: { name: 'USD', symbol: 'USD', decimals: 18 },
-  feeToken: '0x20c0000000000000000000000000000000000001',
-  blockTime: 30_000,
-})
 
 const tempoMainnetChain = tempoMainnet.extend({
   nativeCurrency: { name: 'USD', symbol: 'USD', decimals: 18 },
@@ -48,6 +45,21 @@ const getErrorMessage = (err: unknown) => {
   return 'Unknown error'
 }
 
+/** Prefer upstream `details` when the server only returns a generic error label. */
+const stableTravelErrorMessage = (
+  dataObj: { error?: string; details?: unknown } | null,
+  text: string,
+) => {
+  const generic = 'StableTravel request failed.'
+  const err = dataObj?.error
+  const d = dataObj?.details
+  const detailStr =
+    d == null ? '' : typeof d === 'string' ? d : JSON.stringify(d)
+  if (err === generic && detailStr) return detailStr
+  if (detailStr && err) return `${err} ${detailStr}`
+  return err || detailStr || text || generic
+}
+
 export default function TravelApp() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -55,7 +67,6 @@ export default function TravelApp() {
     'Travel ops dashboard initialized. Run StableTravel, Aviationstack, or Google Maps checks.',
   ])
 
-  const [network, setNetwork] = useState<Network>('testnet')
   const [walletAddress, setWalletAddress] = useState('')
 
   const [origin, setOrigin] = useState('JFK')
@@ -83,9 +94,9 @@ export default function TravelApp() {
     return { data, text }
   }
 
-  const addTempoNetwork = async (target: Network) => {
+  const addTempoMainnet = async () => {
     if (!window.ethereum) throw new Error('Wallet not found. Install Tempo Wallet or MetaMask.')
-    const chain = target === 'testnet' ? tempoTestnetChain : tempoMainnetChain
+    const chain = tempoMainnetChain
     const rpcUrl = chain.rpcUrls.default.http[0]
     await window.ethereum.request({
       method: 'wallet_addEthereumChain',
@@ -100,9 +111,9 @@ export default function TravelApp() {
     })
   }
 
-  const switchWalletNetwork = async (target: Network) => {
+  const switchWalletToMainnet = async () => {
     if (!window.ethereum) throw new Error('Wallet not found. Install Tempo Wallet or MetaMask.')
-    const chain = target === 'testnet' ? tempoTestnetChain : tempoMainnetChain
+    const chain = tempoMainnetChain
     const chainIdHex = toHexChainId(chain.id)
     try {
       await window.ethereum.request({
@@ -112,7 +123,7 @@ export default function TravelApp() {
     } catch (err) {
       const e = err as { code?: number }
       if (e?.code === 4902) {
-        await addTempoNetwork(target)
+        await addTempoMainnet()
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: chainIdHex }],
@@ -123,29 +134,23 @@ export default function TravelApp() {
     }
   }
 
-  const ensureWalletTempoChainFromChallenge = async (wwwAuthenticate: string) => {
+  /** StableTravel (official partner) uses Tempo mainnet only; align wallet if challenge says mainnet. */
+  const ensureWalletMainnetFromChallenge = async (wwwAuthenticate: string) => {
     const match = wwwAuthenticate.match(/request="([^"]+)"/)
-    if (!match?.[1]) return null
+    if (!match?.[1]) return false
 
     let decoded: unknown
     try {
       decoded = JSON.parse(base64UrlDecode(match[1]))
     } catch {
-      return null
+      return false
     }
 
     const chainId = (decoded as { methodDetails?: { chainId?: unknown } })?.methodDetails?.chainId
-    if (typeof chainId !== 'number') return null
+    if (typeof chainId !== 'number' || chainId !== tempoMainnetChain.id) return false
 
-    const target: Network =
-      chainId === tempoTestnetChain.id ? 'testnet' : chainId === tempoMainnetChain.id ? 'mainnet' : network
-
-    // If chainId is neither, we don't want to randomly switch networks.
-    if (target !== 'testnet' && target !== 'mainnet') return null
-
-    setNetwork(target)
-    await switchWalletNetwork(target)
-    return target
+    await switchWalletToMainnet()
+    return true
   }
 
   const connectWallet = async () => {
@@ -157,7 +162,7 @@ export default function TravelApp() {
       if (!accounts?.length) throw new Error('No wallet account returned.')
       const selected = accounts[0]
       setWalletAddress(selected)
-      await switchWalletNetwork(network)
+      await switchWalletToMainnet()
       pushLog(`Wallet connected: ${selected.slice(0, 10)}...`)
     } catch (err) {
       const message = getErrorMessage(err)
@@ -186,29 +191,26 @@ export default function TravelApp() {
         }),
       }
 
-      let resolvedNetwork: Network = network
-
-      // Preflight: call once to learn what Tempo chain the x402 challenge expects.
-      // Then switch wallet accordingly before trying `mppx`.
+      // Preflight: if x402 challenge targets mainnet, switch wallet before `mppx`.
       try {
         const pre = await fetch('/api/travel/stable/flights-search', requestInit)
         if (pre.status === 402) {
           const www = pre.headers.get('www-authenticate') || ''
-          if (www) {
-            const target = await ensureWalletTempoChainFromChallenge(www)
-            if (target) resolvedNetwork = target
-          }
+          if (www) await ensureWalletMainnetFromChallenge(www)
         }
       } catch {
-        // Ignore preflight failures; we'll fall back to the user-selected `network`.
+        // Ignore; we'll still try mainnet below.
       }
 
-      await switchWalletNetwork(resolvedNetwork)
+      await switchWalletToMainnet()
 
-      const chain = resolvedNetwork === 'testnet' ? tempoTestnetChain : tempoMainnetChain
+      const chain = tempoMainnetChain
       const walletClient = createWalletClient({
         chain,
-        transport: custom(window.ethereum as unknown as Parameters<typeof custom>[0]),
+        transport: tempoBrowserWalletTransport(
+          window.ethereum as BrowserEthereumProvider,
+          tempoMainnetChain.rpcUrls.default.http[0],
+        ),
         account: walletAddress as `0x${string}`,
       }).extend(tempoActions())
 
@@ -218,6 +220,7 @@ export default function TravelApp() {
             tempoClient({
               account: walletAddress as `0x${string}`,
               mode,
+              maxDeposit: TEMPO_MPP_SESSION_MAX_DEPOSIT,
               getClient: async () => walletClient,
             }),
           ],
@@ -238,7 +241,7 @@ export default function TravelApp() {
         | null
 
       if (!res.ok) {
-        throw new Error(dataObj?.error || dataObj?.details || text || 'StableTravel request failed')
+        throw new Error(stableTravelErrorMessage(dataObj, text))
       }
 
       const offers = Array.isArray(dataObj?.result?.data) ? dataObj.result!.data!.length : 0
@@ -345,13 +348,9 @@ export default function TravelApp() {
               Departure date
               <input value={departureDate} onChange={(e) => setDepartureDate(e.target.value)} disabled={loading} />
             </label>
-            <label>
-              Network
-              <select value={network} onChange={(e) => setNetwork(e.target.value as Network)} disabled={loading}>
-                <option value="testnet">Tempo testnet</option>
-                <option value="mainnet">Tempo mainnet</option>
-              </select>
-            </label>
+            <p className="intent" style={{ gridColumn: '1 / -1', margin: 0 }}>
+              StableTravel uses <strong>Tempo mainnet</strong> (official partner).
+            </p>
             <label>
               Wallet
               <input value={walletAddress} readOnly placeholder="Connect wallet first" />
