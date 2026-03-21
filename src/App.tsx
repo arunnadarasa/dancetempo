@@ -781,6 +781,9 @@ function App() {
           <a className="secondary" href="/dance-extras" style={{ padding: '0.5rem 0.75rem', borderRadius: 8 }}>
             7 flows (testnet/mainnet page)
           </a>
+          <a className="secondary" href="/tempo-wallet" style={{ padding: '0.5rem 0.75rem', borderRadius: 8 }}>
+            Tempo Wallet CLI
+          </a>
         </div>
       </header>
 
@@ -941,6 +944,13 @@ function App() {
         <p>
           Open <code>/dance-extras</code> for the seven other core DanceTech scaffolds (judge, cypher, clips,
           reputation, studio AI, bot, fan pass) with <strong>testnet/mainnet</strong> on each API call.
+        </p>
+        <p>
+          Open <code>/tempo-wallet</code> for the official{' '}
+          <a href="https://github.com/tempoxyz/wallet" target="_blank" rel="noreferrer">
+            Tempo Wallet CLI
+          </a>{' '}
+          (passkey login + <code>tempo request</code> for MPP) and copy-paste examples against this API.
         </p>
         <p>
           Open <code>/card</code> for dedicated virtual debit card creation.

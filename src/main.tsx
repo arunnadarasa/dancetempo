@@ -24,6 +24,7 @@ import ExtraDanceApp from './ExtraDanceApp.tsx'
 import OpsApp from './OpsApp.tsx'
 import KicksApp from './KicksApp.tsx'
 import Tip20App from './Tip20App.tsx'
+import TempoWalletApp from './TempoWalletApp.tsx'
 
 const isBattleRoute = window.location.pathname === '/battle'
 const isCoachingRoute = window.location.pathname === '/coaching'
@@ -47,6 +48,7 @@ const isDanceExtrasRoute =
 const isOpsRoute = window.location.pathname === '/ops'
 const isKicksRoute = window.location.pathname === '/kicks'
 const isTip20Route = window.location.pathname === '/tip20'
+const isTempoWalletRoute = window.location.pathname === '/tempo-wallet'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -94,6 +96,8 @@ createRoot(document.getElementById('root')!).render(
       <KicksApp />
     ) : isTip20Route ? (
       <Tip20App />
+    ) : isTempoWalletRoute ? (
+      <TempoWalletApp />
     ) : (
       <App />
     )}

@@ -1,5 +1,9 @@
 # Testing [Stripe `purl`](https://github.com/stripe/purl) with DanceTempo
 
+**See also:** in-app showcase for the official [**Tempo Wallet CLI**](https://github.com/tempoxyz/wallet) at **`/tempo-wallet`** — passkey login and `tempo request` for the same MPP patterns.
+
+---
+
 This documents a **local smoke test**: `purl` can **parse** the `402 Payment Required` response from DanceTempo’s live MPP routes and identify **MPP on Tempo testnet** (`eip155:42431`).
 
 ## Prerequisites
