@@ -37,6 +37,7 @@ DanceTech Protocol is **one** stack (Tempo settlement + MPP/x402 authorization).
 - **Backend:** Node.js, Express 5  
 - **Docs in repo:** [`DANCETECH_USE_CASES.md`](./DANCETECH_USE_CASES.md) — flows, endpoints, testing notes  
 - **Landing / Lovable handoff:** [`DANCE_TECH_PROTOCOL_AZ.md`](./DANCE_TECH_PROTOCOL_AZ.md) — A–Z narrative + GitHub links for marketing sites  
+- **Stripe `purl` CLI:** [`docs/PURL_DANCETEMPO.md`](./docs/PURL_DANCETEMPO.md) — smoke test `purl --dry-run` against live MPP routes  
 - **Agent / tribal knowledge:** [`CLAWHUB.md`](./CLAWHUB.md) — successes, failures, debugging checklists  
 
 ### Local dev (Vite + API)
@@ -171,6 +172,7 @@ See `.env.example` for the full list and placeholders.
 ├── public/        # Static assets
 ├── DANCETECH_USE_CASES.md
 ├── DANCE_TECH_PROTOCOL_AZ.md  # A–Z protocol copy for landing pages (e.g. Lovable)
+├── docs/PURL_DANCETEMPO.md    # Stripe purl CLI vs DanceTempo 402
 ├── CLAWHUB.md     # Learning notes, failures, debugging playbooks
 ├── LOVABLE_HANDOFF.md
 └── vite.config.ts # dev proxy: /api → http://localhost:8787

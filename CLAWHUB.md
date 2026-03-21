@@ -30,32 +30,36 @@ Core docs to reuse:
 
 ## Successes (what worked)
 
-1. **Superapp README now reflects the real architecture**
+1. **Stripe `purl` + DanceTempo `402` (MPP on Tempo testnet)**  
+   - With a **Tempo** keystore (`purl wallet add --type tempo`), `purl --dry-run -X POST --json '…' http://127.0.0.1:8787/api/dance-extras/live/judge-score/testnet` correctly detects **402**, protocol **mpp**, network **eip155:42431**, **0.01 pathUSD**.  
+   - `purl inspect` uses **GET**; POST-only routes return 404 — use **dry-run + POST** for dance-extras live. See **`docs/PURL_DANCETEMPO.md`**.
+
+2. **Superapp README now reflects the real architecture**
    - Added a “super app” definition that maps: hub vs dedicated routes vs backend vs integrations.
    - Included the dedicated route table so explanations don’t drift from implementation.
    - Documented quick start (`npm run server`, `npm run dev`, `npm run dev:full`) and environment guidance.
 
-2. **GitHub push worked after unrelated-history + README conflict**
+3. **GitHub push worked after unrelated-history + README conflict**
    - When the remote `main` already had commits, the first push failed (non-fast-forward).
    - Pulling unrelated histories caused a `README.md` conflict.
    - Resolution strategy: keep the README focused (short title/one-line description) and remove template bulk rather than trying to merge two incompatible README styles.
 
-3. **AgentMail “email” flow got to a working end-to-end pattern**
+4. **AgentMail “email” flow got to a working end-to-end pattern**
    - Earlier attempts hit MPP/inbox scope mismatches (notably `Inbox not found`).
    - The final working approach:
      - the wallet pays **this backend** using **Tempo MPP** (`mppx` server charge),
      - then the backend sends the email via **AgentMail’s API key endpoint** (`AGENTMAIL_API_KEY`).
    - This preserves “wallet-paid UX” while avoiding fragile inbox scope behavior in passthrough mode.
 
-4. **`/dance-extras` live MPP + shared server handler**
+5. **`/dance-extras` live MPP + shared server handler**
    - `POST /api/dance-extras/live/:flowKey/:network` runs `mppx.tempo.charge` then `executeDanceExtraFlow` so the seven core DanceTech scaffolds share one payment path.
    - `GET /api/dance-extras/live` returns `flowKeys` — use it to verify the running Node process actually has the route (see failure §5).
 
-5. **AgentMail bot flow: always send `inbox_id`**
+6. **AgentMail bot flow: always send `inbox_id`**
    - `/api/ops/agentmail/send` requires `inbox_id` (or `AGENTMAIL_INBOX_ID` on the server).
    - Demo default in the client: `streetkode@agentmail.to` via `src/agentmailDemo.ts` (`AGENTMAIL_DEMO_INBOX_ID`).
 
-6. **Server integration patterns are consistent**
+7. **Server integration patterns are consistent**
    - For `402`-capable third-party endpoints:
      - if upstream returns `402`, the backend should pass that challenge back to the client (so `mppx` can solve).
    - For “paid endpoints then poll” integrations:
