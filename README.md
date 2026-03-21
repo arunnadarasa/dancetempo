@@ -183,6 +183,7 @@ See `.env.example` for the full list and placeholders.
 | **OpenClaw Anyway plugin (optional)** | `openclaw plugins install @anyway-sh/anyway-openclaw` — extra runtime tools; pair with the skill · **`.cursor/skills/clawhub/references/openclaw-dancetempo.md`** |
 | EVVM upstream | [`https://www.evvm.info/llms-full.txt`](https://www.evvm.info/llms-full.txt) (not vendored; attach when doing deep EVVM work) |
 | **MPPScan discovery** | **`GET /openapi.json`** on the API (OpenAPI 3.1 + `x-payment-info` for live MPP routes). Validate: **`npm run discovery`** (server on **8787**). Guide: [`docs/MPPSCAN_DISCOVERY.md`](./docs/MPPSCAN_DISCOVERY.md) · [mppscan.com/discovery](https://www.mppscan.com/discovery) |
+| **Ecosystem synergy** | [docs/ECOSYSTEM_SYNERGY.md](./docs/ECOSYSTEM_SYNERGY.md) — MPP + Tempo vs **mpp-nanogpt-modal**; nanoGPT / nanochat / autoresearch vs DanceTempo; OpenClaw skill + plugins |
 
 ---
 
@@ -193,7 +194,7 @@ See `.env.example` for the full list and placeholders.
 ├── server/           # Express API (index.js, payments.js)
 ├── public/           # Static assets; llm-full.txt generated here
 ├── scripts/          # build-llm-full.mjs, install-evvm.mjs
-├── docs/             # PURL, wallet test, EVVM_TEMPO, MPPSCAN_DISCOVERY, …
+├── docs/             # PURL, wallet, EVVM, MPPScan, ECOSYSTEM_SYNERGY, …
 ├── .cursor/skills/clawhub/  # ClawHub / Cursor skill (hooks, references, assets)
 ├── .github/          # copilot-instructions.md
 ├── DANCETECH_USE_CASES.md

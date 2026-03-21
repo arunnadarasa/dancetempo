@@ -4,7 +4,7 @@
 
 For **full-repo orientation** in one paste (ChatGPT, Claude, Cursor, OpenClaw): use **`public/llm-full.txt`**, built from README + this file + `DANCETECH_USE_CASES.md` + `DANCE_TECH_PROTOCOL_AZ.md` + purl/tempo wallet + **`docs/EVVM_TEMPO.md`** + **`docs/MPPSCAN_DISCOVERY.md`**.
 
-**Published skill (ClawHub):** [clawhub.ai/arunnadarasa/dancetempo](https://clawhub.ai/arunnadarasa/dancetempo) — install the DanceTempo skill for IDE/OpenClaw; source of truth remains **`.cursor/skills/clawhub/`** in git. **OpenClaw (optional):** `openclaw plugins install @anyway-sh/anyway-openclaw` — documented in **`references/openclaw-dancetempo.md`**.
+**Published skill (ClawHub):** [clawhub.ai/arunnadarasa/dancetempo](https://clawhub.ai/arunnadarasa/dancetempo) — install the DanceTempo skill for IDE/OpenClaw; source of truth remains **`.cursor/skills/clawhub/`** in git. **OpenClaw (optional):** `openclaw plugins install @anyway-sh/anyway-openclaw` — documented in **`references/openclaw-dancetempo.md`**. **Ecosystem framing:** **`docs/ECOSYSTEM_SYNERGY.md`** (mpp-nanogpt-modal, nanoGPT/nanochat/autoresearch, ClawHub + plugins).
 
 - **Regenerate:** `npm run build:llm` (runs automatically before `npm run build`).
 - **In the browser:** open **`/llm-full.txt`** or use the hub **“Download LLM context bundle”** button on `/`.

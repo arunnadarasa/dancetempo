@@ -2,7 +2,7 @@
 
 **Purpose:** Single file to paste into an LLM system prompt, upload to a coding agent, or feed RAG — **full orientation** to this repository.
 
-**Generated:** 2026-03-21T18:19:04.942Z (re-run `npm run build:llm` after doc edits)
+**Generated:** 2026-03-21T18:22:48.777Z (re-run `npm run build:llm` after doc edits)
 
 **Download (running app):** `/llm-full.txt` from the dev server or production site.
 
@@ -211,6 +211,7 @@ See `.env.example` for the full list and placeholders.
 | **OpenClaw Anyway plugin (optional)** | `openclaw plugins install @anyway-sh/anyway-openclaw` — extra runtime tools; pair with the skill · **`.cursor/skills/clawhub/references/openclaw-dancetempo.md`** |
 | EVVM upstream | [`https://www.evvm.info/llms-full.txt`](https://www.evvm.info/llms-full.txt) (not vendored; attach when doing deep EVVM work) |
 | **MPPScan discovery** | **`GET /openapi.json`** on the API (OpenAPI 3.1 + `x-payment-info` for live MPP routes). Validate: **`npm run discovery`** (server on **8787**). Guide: [`docs/MPPSCAN_DISCOVERY.md`](./docs/MPPSCAN_DISCOVERY.md) · [mppscan.com/discovery](https://www.mppscan.com/discovery) |
+| **Ecosystem synergy** | [docs/ECOSYSTEM_SYNERGY.md](./docs/ECOSYSTEM_SYNERGY.md) — MPP + Tempo vs **mpp-nanogpt-modal**; nanoGPT / nanochat / autoresearch vs DanceTempo; OpenClaw skill + plugins |
 
 ---
 
@@ -221,7 +222,7 @@ See `.env.example` for the full list and placeholders.
 ├── server/           # Express API (index.js, payments.js)
 ├── public/           # Static assets; llm-full.txt generated here
 ├── scripts/          # build-llm-full.mjs, install-evvm.mjs
-├── docs/             # PURL, wallet test, EVVM_TEMPO, MPPSCAN_DISCOVERY, …
+├── docs/             # PURL, wallet, EVVM, MPPScan, ECOSYSTEM_SYNERGY, …
 ├── .cursor/skills/clawhub/  # ClawHub / Cursor skill (hooks, references, assets)
 ├── .github/          # copilot-instructions.md
 ├── DANCETECH_USE_CASES.md
@@ -270,7 +271,7 @@ This project is licensed under the MIT License. See [`LICENSE`](./LICENSE).
 
 For **full-repo orientation** in one paste (ChatGPT, Claude, Cursor, OpenClaw): use **`public/llm-full.txt`**, built from README + this file + `DANCETECH_USE_CASES.md` + `DANCE_TECH_PROTOCOL_AZ.md` + purl/tempo wallet + **`docs/EVVM_TEMPO.md`** + **`docs/MPPSCAN_DISCOVERY.md`**.
 
-**Published skill (ClawHub):** [clawhub.ai/arunnadarasa/dancetempo](https://clawhub.ai/arunnadarasa/dancetempo) — install the DanceTempo skill for IDE/OpenClaw; source of truth remains **`.cursor/skills/clawhub/`** in git. **OpenClaw (optional):** `openclaw plugins install @anyway-sh/anyway-openclaw` — documented in **`references/openclaw-dancetempo.md`**.
+**Published skill (ClawHub):** [clawhub.ai/arunnadarasa/dancetempo](https://clawhub.ai/arunnadarasa/dancetempo) — install the DanceTempo skill for IDE/OpenClaw; source of truth remains **`.cursor/skills/clawhub/`** in git. **OpenClaw (optional):** `openclaw plugins install @anyway-sh/anyway-openclaw` — documented in **`references/openclaw-dancetempo.md`**. **Ecosystem framing:** **`docs/ECOSYSTEM_SYNERGY.md`** (mpp-nanogpt-modal, nanoGPT/nanochat/autoresearch, ClawHub + plugins).
 
 - **Regenerate:** `npm run build:llm` (runs automatically before `npm run build`).
 - **In the browser:** open **`/llm-full.txt`** or use the hub **“Download LLM context bundle”** button on `/`.
@@ -1510,3 +1511,53 @@ After validation passes, register the **public origin** of your API (production 
 
 
 ## <<< END FILE: docs/MPPSCAN_DISCOVERY.md
+
+
+## >>> BEGIN FILE: docs/ECOSYSTEM_SYNERGY.md
+
+# Ecosystem synergy (DanceTempo & friends)
+
+How **DanceTempo** fits next to other agent, MPP, and research stacks—not duplicate products, **composable layers**.
+
+---
+
+## Technical: MPP + Tempo, different workload
+
+**[gakonst/mpp-nanogpt-modal](https://github.com/gakonst/mpp-nanogpt-modal)** is the clearest **technical** synergy with DanceTempo:
+
+- **Same rails:** [Tempo](https://tempo.xyz), [MPP](https://mpp.dev), **HTTP 402**, `tempo request`, stablecoin settlement — no API-key fiction.
+- **Different job:** that repo pays for **Modal GPU** time to run **[nanoGPT](https://github.com/karpathy/nanoGPT)** training; DanceTempo exposes **your** HTTP APIs (DanceTech routes, `402`, receipts).
+
+Together they tell one story: *agents pay on-chain for **compute** (nanoGPT sandbox) and for **APIs** (DanceTempo) with the same wallet behavior.*
+
+---
+
+## Narrative: research stack vs product reference
+
+| Track | Examples | Role |
+|-------|----------|------|
+| **Research / LLM** | [nanoGPT](https://github.com/karpathy/nanoGPT) → [nanochat](https://github.com/karpathy/nanochat) → [autoresearch](https://github.com/karpathy/autoresearch) | Train models, leaderboards, **agent-in-the-loop** experiments (e.g. `val_bpb`, speedruns). |
+| **Product / protocol** | **DanceTempo** | Reference **superapp** + **DanceTech** patterns on **Tempo + MPP/x402** — battle, coaching, dance-extras, integrations, **`/openapi.json`**. |
+
+Same **agent + money + automation** arc, **different layer**: research stacks optimize **model metrics**; DanceTempo optimizes **verifiable payments and ops** for the dance industry (and serves as a **pattern library** for other domains).
+
+---
+
+## OpenClaw: context + automation + plugins
+
+- **[ClawHub skill](https://clawhub.ai/arunnadarasa/dancetempo)** (this repo’s **`.cursor/skills/clawhub/`**) — *what to read* (`llm-full.txt`, `CLAWHUB.md`, smoke tests, MPPScan/OpenAPI).
+- **Clawflows-style automation** (multi-step OpenClaw flows) — *how* agents run long jobs across skills.
+- **OpenClaw plugins** (e.g. **`@anyway-sh/anyway-openclaw`**) — *extra gateway capabilities* alongside core OpenClaw.
+
+**Synergy:** plugins widen **what the gateway can do**; the DanceTempo skill defines **how to work this repo and its paid HTTP surface** — compose both for multi-step agent work against DanceTempo **and** the wider ecosystem.
+
+---
+
+## See also
+
+- [MPPScan discovery](./MPPSCAN_DISCOVERY.md) — `GET /openapi.json`
+- [EVVM on Tempo](./EVVM_TEMPO.md)
+- [ClawHub + OpenClaw](../.cursor/skills/clawhub/references/openclaw-dancetempo.md)
+
+
+## <<< END FILE: docs/ECOSYSTEM_SYNERGY.md

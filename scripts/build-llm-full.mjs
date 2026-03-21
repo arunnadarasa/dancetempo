@@ -19,6 +19,7 @@ const FILES = [
   ['docs/TEMPO_WALLET_TEST.md', 'docs/TEMPO_WALLET_TEST.md'],
   ['docs/EVVM_TEMPO.md', 'docs/EVVM_TEMPO.md'],
   ['docs/MPPSCAN_DISCOVERY.md', 'docs/MPPSCAN_DISCOVERY.md'],
+  ['docs/ECOSYSTEM_SYNERGY.md', 'docs/ECOSYSTEM_SYNERGY.md'],
 ]
 
 const header = `# DanceTempo / DanceTech Protocol — LLM context bundle
