@@ -17,6 +17,7 @@ const FILES = [
   ['DANCE_TECH_PROTOCOL_AZ.md', 'DANCE_TECH_PROTOCOL_AZ.md'],
   ['docs/PURL_DANCETEMPO.md', 'docs/PURL_DANCETEMPO.md'],
   ['docs/TEMPO_WALLET_TEST.md', 'docs/TEMPO_WALLET_TEST.md'],
+  ['docs/EVVM_TEMPO.md', 'docs/EVVM_TEMPO.md'],
 ]
 
 const header = `# DanceTempo / DanceTech Protocol — LLM context bundle

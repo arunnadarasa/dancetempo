@@ -15,7 +15,7 @@ DanceTech Protocol is **one** stack (Tempo settlement + MPP/x402 authorization).
 | **Agent → human** | Automated action delivers something to a person (email, alert, receipt, pass). | Ops bot + AgentMail, notifications; fulfillment after payment—not a second payment “protocol.” |
 | **Agent → agent** | Service-to-service: backends, cron, or **machine payments** between APIs. | `402` + `mppx` on the server, **API keys** where allowed (e.g. AgentMail after MPP), webhooks, `POST /api/*` from trusted workers. |
 
-**Roles (mental model):** **Payer** (human wallet vs server treasury vs delegated agent), **beneficiary** (human vs org vs system), **channel** (browser vs server). Ambient agents (e.g. coding assistants) consume **skills** like [`CLAWHUB.md`](./CLAWHUB.md) and [`.cursor/skills/clawhub`](./.cursor/skills/clawhub/SKILL.md); runtime agents should call the **same** Express contracts with explicit trust boundaries.
+**Roles (mental model):** **Payer** (human wallet vs server treasury vs delegated agent), **beneficiary** (human vs org vs system), **channel** (browser vs server). Ambient agents (e.g. coding assistants) consume **skills** like [`CLAWHUB.md`](./CLAWHUB.md) and [`.cursor/skills/clawhub/`](./.cursor/skills/clawhub/README.md); runtime agents should call the **same** Express contracts with explicit trust boundaries.
 
 ---
 
@@ -38,9 +38,11 @@ DanceTech Protocol is **one** stack (Tempo settlement + MPP/x402 authorization).
 - **Docs in repo:** [`DANCETECH_USE_CASES.md`](./DANCETECH_USE_CASES.md) — flows, endpoints, testing notes  
 - **Landing / Lovable handoff:** [`DANCE_TECH_PROTOCOL_AZ.md`](./DANCE_TECH_PROTOCOL_AZ.md) — A–Z narrative + GitHub links for marketing sites  
 - **Stripe `purl` CLI:** route **`/purl`** — copy-paste `curl` + `purl` for **testnet + mainnet**; long-form [`docs/PURL_DANCETEMPO.md`](./docs/PURL_DANCETEMPO.md)  
+- **EVVM:** optional **`npm run evvm:vendor`** (full upstream clone + `./evvm install`); Solidity library: **`npm install @evvm/testnet-contracts`** when you need imports; route **`/evvm`** — deploy on **Tempo testnet only**; long-form [`docs/EVVM_TEMPO.md`](./docs/EVVM_TEMPO.md) (skip global registry until EVVM lists Tempo)  
 - **Tempo Wallet CLI (official):** route **`/tempo-wallet`** — in-app showcase + copy-paste for [`tempoxyz/wallet`](https://github.com/tempoxyz/wallet); verification log [`docs/TEMPO_WALLET_TEST.md`](./docs/TEMPO_WALLET_TEST.md)  
 - **Agent / tribal knowledge:** [`CLAWHUB.md`](./CLAWHUB.md) — successes, failures, debugging checklists  
 - **LLM context bundle (single file):** [`public/llm-full.txt`](./public/llm-full.txt) — concatenated README + use cases + ClawHub + protocol docs; **regenerate** with `npm run build:llm`. **Download** from the running app at **`/llm-full.txt`** (hub button: “Download LLM context bundle”) or from GitHub raw after push.
+- **GitHub Copilot:** [`.github/copilot-instructions.md`](./.github/copilot-instructions.md) — short project hints (same idea as the [ClawHub skill](https://clawhub.ai/)’s Copilot section). **Cursor / ClawHub skill:** [`.cursor/skills/clawhub/`](./.cursor/skills/clawhub/) — `SKILL.md`, **`references/`**, **`assets/`**, **`hooks/openclaw/`** (OpenClaw bootstrap hook **`dancetempo-clawhub`**), **`scripts/verify-dancetempo-context.sh`**, package **[`README.md`](./.cursor/skills/clawhub/README.md)** (zip the folder for ClawHub upload; modeled on [self-improving-agent](https://clawhub.ai/pskoett/self-improving-agent)).
 
 ### Local dev (Vite + API)
 
@@ -100,6 +102,7 @@ The **[Machine Payments Protocol service catalog](https://mpp.dev/services)** li
 | `/tip20` | TIP‑20 token launch & post-launch ops |
 | `/tempo-wallet` | Showcase: [Tempo Wallet CLI](https://github.com/tempoxyz/wallet) (MPP + `tempo request`; pairs with `/dance-extras` live routes) |
 | `/purl` | Showcase: [Stripe purl](https://github.com/stripe/purl) — `curl` + `purl --dry-run` / live pay for **testnet + mainnet** live MPP URLs |
+| `/evvm` | [EVVM](https://www.evvm.info/) — `evvm:vendor` + deploy on **Tempo testnet (42431)**; optional `npm i @evvm/testnet-contracts` for Solidity; registry step deferred |
 
 ---
 
@@ -168,18 +171,33 @@ See `.env.example` for the full list and placeholders.
 
 ---
 
+## Agents & LLM context
+
+| Resource | Purpose |
+|----------|---------|
+| [`public/llm-full.txt`](./public/llm-full.txt) | Single-file bundle (README + use cases + ClawHub + protocol + purl/wallet/EVVM docs). **Regenerate:** `npm run build:llm` |
+| [`CLAWHUB.md`](./CLAWHUB.md) | Tribal debugging — what worked / failed |
+| [`.github/copilot-instructions.md`](./.github/copilot-instructions.md) | Hints for GitHub Copilot |
+| [`.cursor/skills/clawhub/`](./.cursor/skills/clawhub/README.md) | **Cursor / [ClawHub](https://clawhub.ai/)** skill: `SKILL.md`, `references/`, `assets/`, optional OpenClaw hook `hooks/openclaw/`, `scripts/verify-dancetempo-context.sh` — zip this folder to publish the skill |
+| EVVM upstream | [`https://www.evvm.info/llms-full.txt`](https://www.evvm.info/llms-full.txt) (not vendored; attach when doing deep EVVM work) |
+
+---
+
 ## Repository layout
 
 ```
-├── src/           # React apps (App + route-specific *App.tsx)
-├── server/        # Express API (index.js, payments.js)
-├── public/        # Static assets
+├── src/              # React apps (App + route-specific *App.tsx); routes in main.tsx + hubRoutes.ts
+├── server/           # Express API (index.js, payments.js)
+├── public/           # Static assets; llm-full.txt generated here
+├── scripts/          # build-llm-full.mjs, install-evvm.mjs
+├── docs/             # PURL_DANCETEMPO.md, TEMPO_WALLET_TEST.md, EVVM_TEMPO.md
+├── .cursor/skills/clawhub/  # ClawHub / Cursor skill (hooks, references, assets)
+├── .github/          # copilot-instructions.md
 ├── DANCETECH_USE_CASES.md
 ├── DANCE_TECH_PROTOCOL_AZ.md  # A–Z protocol copy for landing pages (e.g. Lovable)
-├── docs/PURL_DANCETEMPO.md    # Stripe purl CLI vs DanceTempo 402
-├── CLAWHUB.md     # Learning notes, failures, debugging playbooks
+├── CLAWHUB.md        # Learning notes, failures, debugging playbooks
 ├── LOVABLE_HANDOFF.md
-└── vite.config.ts # dev proxy: /api → http://localhost:8787
+└── vite.config.ts    # dev proxy: /api → http://localhost:8787
 ```
 
 ---
@@ -196,7 +214,8 @@ See `.env.example` for the full list and placeholders.
 
 1. Fork or clone this repo  
 2. Configure `.env` for the use cases you need  
-3. Extend `server/index.js` or add a new `src/*App.tsx` + route in `src/main.tsx`  
+3. Extend `server/index.js` or add a new `src/*App.tsx` + route in `src/main.tsx` and **`src/hubRoutes.ts`** (hub directory)  
+4. After editing docs that feed **`llm-full.txt`**, run **`npm run build:llm`** before committing  
 
 ---
 

@@ -2,13 +2,13 @@
 
 ## LLM context bundle (`llm-full.txt`)
 
-For **full-repo orientation** in one paste (ChatGPT, Claude, Cursor, OpenClaw): use **`public/llm-full.txt`**, built from README + this file + `DANCETECH_USE_CASES.md` + `DANCE_TECH_PROTOCOL_AZ.md` + purl/tempo wallet docs.
+For **full-repo orientation** in one paste (ChatGPT, Claude, Cursor, OpenClaw): use **`public/llm-full.txt`**, built from README + this file + `DANCETECH_USE_CASES.md` + `DANCE_TECH_PROTOCOL_AZ.md` + purl/tempo wallet + **`docs/EVVM_TEMPO.md`**.
 
 - **Regenerate:** `npm run build:llm` (runs automatically before `npm run build`).
 - **In the browser:** open **`/llm-full.txt`** or use the hub **“Download LLM context bundle”** button on `/`.
 - **In GitHub:** Raw URL is `https://raw.githubusercontent.com/arunnadarasa/dancetempo/main/public/llm-full.txt`.
 
-Keep **this file (`CLAWHUB.md`)** for debugging checklists and failures; pair it with `llm-full.txt` when an agent needs both product context and tribal knowledge.
+Keep **this file (`CLAWHUB.md`)** for debugging checklists and failures; pair it with `llm-full.txt` when an agent needs both product context and tribal knowledge. For **EVVM** depth beyond `docs/EVVM_TEMPO.md`, use upstream **`https://www.evvm.info/llms-full.txt`** (EVVM’s bundle; not vendored here).
 
 ---
 

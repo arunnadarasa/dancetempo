@@ -26,6 +26,7 @@ import KicksApp from './KicksApp.tsx'
 import Tip20App from './Tip20App.tsx'
 import TempoWalletApp from './TempoWalletApp.tsx'
 import PurlApp from './PurlApp.tsx'
+import EvvmApp from './EvvmApp.tsx'
 
 const isBattleRoute = window.location.pathname === '/battle'
 const isCoachingRoute = window.location.pathname === '/coaching'
@@ -51,6 +52,7 @@ const isKicksRoute = window.location.pathname === '/kicks'
 const isTip20Route = window.location.pathname === '/tip20'
 const isTempoWalletRoute = window.location.pathname === '/tempo-wallet'
 const isPurlRoute = window.location.pathname === '/purl'
+const isEvvmRoute = window.location.pathname === '/evvm'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -102,6 +104,8 @@ createRoot(document.getElementById('root')!).render(
       <TempoWalletApp />
     ) : isPurlRoute ? (
       <PurlApp />
+    ) : isEvvmRoute ? (
+      <EvvmApp />
     ) : (
       <App />
     )}

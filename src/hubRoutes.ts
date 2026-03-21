@@ -19,6 +19,7 @@ export const HUB_ROUTE_GROUPS: HubRouteGroup[] = [
     routes: [
       { href: '/tempo-wallet', title: 'Tempo Wallet', hint: 'Official CLI + tempo request' },
       { href: '/purl', title: 'Stripe purl', hint: 'curl-style MPP dry-run' },
+      { href: '/evvm', title: 'EVVM', hint: 'Deploy on Tempo testnet' },
     ],
     footnote:
       'Mainnet live MPP: plan for at least ~50 USDC on Tempo mainnet (gas/path fees + paid calls; exact minimum varies by route). Use testnet first.',
