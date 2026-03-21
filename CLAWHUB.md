@@ -6,7 +6,7 @@ For **full-repo orientation** in one paste (ChatGPT, Claude, Cursor, OpenClaw): 
 
 - **Regenerate:** `npm run build:llm` (runs automatically before `npm run build`).
 - **In the browser:** open **`/llm-full.txt`** or use the hub **“Download LLM context bundle”** button on `/`.
-- **In GitHub:** Raw URL is `https://raw.githubusercontent.com/<org>/<repo>/main/public/llm-full.txt` after you push.
+- **In GitHub:** Raw URL is `https://raw.githubusercontent.com/arunnadarasa/dancetempo/main/public/llm-full.txt`.
 
 Keep **this file (`CLAWHUB.md`)** for debugging checklists and failures; pair it with `llm-full.txt` when an agent needs both product context and tribal knowledge.
 
