@@ -30,7 +30,7 @@ export const HUB_ROUTE_GROUPS: HubRouteGroup[] = [
       { href: '/card', title: 'Card', hint: 'Virtual debit (Laso / MPP)' },
       { href: '/travel', title: 'Travel', hint: 'StableTravel, aviation, maps' },
       { href: '/kicks', title: 'Kicks', hint: 'KicksDB intel' },
-      { href: '/tip20', title: 'TIP‑20', hint: 'Token launch & ops' },
+      { href: '/tip20', title: 'TIP‑20', hint: 'NHS edu demo + Hospital XYZ token + AgentMail' },
       { href: '/email', title: 'Email', hint: 'AgentMail' },
       { href: '/ops', title: 'Ops', hint: 'AgentMail + StablePhone' },
     ],

@@ -4,7 +4,19 @@ import { type BrowserEthereumProvider, tempoBrowserWalletTransport } from './tem
 import { writeContract } from 'viem/actions'
 import { tempo as tempoMainnet, tempoModerato } from 'viem/chains'
 import { Abis, Addresses, tempoActions, withFeePayer } from 'viem/tempo'
+import { AGENTMAIL_DEMO_INBOX_ID } from './agentmailDemo'
+import { postAgentMailSendWithMpp } from './agentmailOpsSend'
+import { addTxHistory } from './txHistory'
 import './App.css'
+
+/** UK policy context — education only; not legal advice. */
+const UK_CRYPTO_POLICY_URL =
+  'https://www.gov.uk/government/publications/regulatory-regime-for-cryptoassets-regulated-activities-draft-si-and-policy-note/future-financial-services-regulatory-regime-for-cryptoassets-regulated-activities-policy-note-accessible'
+const UK_BLOCKCHAIN_PETITION_URL = 'https://petition.parliament.uk/petitions/730568'
+const BOE_SYSTEMIC_STABLECOIN_CP_URL =
+  'https://www.bankofengland.co.uk/paper/2025/cp/proposed-regulatory-regime-for-sterling-denominated-systemic-stablecoins'
+const AGENTMAIL_HOME = 'https://www.agentmail.to'
+const AGENTMAIL_LLMS = 'https://docs.agentmail.to/llms-full.txt'
 
 const shortValue = (value: string, keep = 26) => {
   if (!value) return value
@@ -53,8 +65,8 @@ type LaunchItem = {
 export default function Tip20App() {
   const [network, setNetwork] = useState<Network>('testnet')
   const [sponsoredFeesEnabled, setSponsoredFeesEnabled] = useState(false)
-  const [name, setName] = useState('Krump USD')
-  const [symbol, setSymbol] = useState('KRUMPUSD')
+  const [name, setName] = useState('Hospital XYZ Demo Token')
+  const [symbol, setSymbol] = useState('HXYZUSD')
   const [decimals, setDecimals] = useState('6')
   const [totalSupply, setTotalSupply] = useState('1000000')
   const [ownerAddress, setOwnerAddress] = useState('')
@@ -104,8 +116,14 @@ export default function Tip20App() {
   const [feePreferenceTxHash, setFeePreferenceTxHash] = useState('')
   const [feePreferenceStatus, setFeePreferenceStatus] = useState<'idle' | 'set' | 'error'>('idle')
   const [tokenlistLogoUri, setTokenlistLogoUri] = useState('')
-  const [projectWebsite, setProjectWebsite] = useState('')
-  const [projectDescription, setProjectDescription] = useState('Krump USD stablecoin on Tempo.')
+  const [projectWebsite, setProjectWebsite] = useState(UK_CRYPTO_POLICY_URL)
+  const [projectDescription, setProjectDescription] = useState(
+    'NHS-themed education demo on Tempo — not a clinical product, NHS endorsement, or regulated financial promotion.',
+  )
+  const [agentMailTo, setAgentMailTo] = useState('streetkode@agentmail.to')
+  const [agentMailInboxId, setAgentMailInboxId] = useState(AGENTMAIL_DEMO_INBOX_ID)
+  const [agentMailSending, setAgentMailSending] = useState(false)
+  const [agentMailMessage, setAgentMailMessage] = useState('')
   const [log, setLog] = useState<string[]>([
     'TIP-20 launcher initialized. Configure token metadata and launch.',
   ])
@@ -1052,7 +1070,106 @@ export default function Tip20App() {
     setDecimals('6')
     setCurrencyCode('USD')
     setQuoteTokenAddress(usdcQuoteToken)
+    setProjectWebsite('')
+    setProjectDescription('Krump USD stablecoin on Tempo.')
     pushLog('Applied stablecoin defaults (USD + network quote token).')
+  }
+
+  const setNhsEducationDefaults = () => {
+    setName('Hospital XYZ Demo Token')
+    setSymbol('HXYZUSD')
+    setDecimals('6')
+    setCurrencyCode('USD')
+    setQuoteTokenAddress(usdcQuoteToken)
+    setProjectWebsite(UK_CRYPTO_POLICY_URL)
+    setProjectDescription(
+      'NHS-themed education demo on Tempo — not a clinical product, NHS endorsement, or regulated financial promotion.',
+    )
+    pushLog('Applied NHS education demo preset (Hospital XYZ–style naming).')
+  }
+
+  const extractHexHash = (value: string) => {
+    const prefixed = value.match(/0x[a-fA-F0-9]{64}/)
+    if (prefixed) return prefixed[0]
+    const bare = value.match(/\b[a-fA-F0-9]{64}\b/)
+    return bare ? `0x${bare[0]}` : ''
+  }
+
+  const sendLaunchSummaryEmail = async () => {
+    setAgentMailSending(true)
+    setAgentMailMessage('')
+    try {
+      if (!walletAddress) throw new Error('Connect wallet first (same wallet pays Tempo MPP for AgentMail relay).')
+      if (!tokenAddress) throw new Error('Launch a token first, then send the summary.')
+      const subject = `[NHS edu / Tempo] TIP-20 launch: ${symbol} (${network})`
+      const explorer = explorerBase
+      const text = [
+        'Tempo TIP-20 launch summary (education / demo only).',
+        '',
+        `Token: ${name} (${symbol})`,
+        `Network: ${network}`,
+        `Token address: ${tokenAddress}`,
+        `Deploy tx: ${deployTxHash || '—'}`,
+        `Mint tx: ${mintTxHash || '—'}`,
+        '',
+        'Disclaimer: This is a non-clinical, non-regulated teaching scaffold. It is not financial, legal, or medical advice.',
+        `HM Treasury policy note (cryptoassets): ${UK_CRYPTO_POLICY_URL}`,
+        `Parliament petition (blockchain / stablecoins): ${UK_BLOCKCHAIN_PETITION_URL}`,
+        `Bank of England consultation (sterling systemic stablecoins): ${BOE_SYSTEMIC_STABLECOIN_CP_URL}`,
+        '',
+        `AgentMail: ${AGENTMAIL_HOME}`,
+        `AgentMail LLM bundle: ${AGENTMAIL_LLMS}`,
+      ].join('\n')
+
+      const html = `
+<p><strong>Tempo TIP-20 launch summary</strong> (NHS education demo — not clinical or regulated advice)</p>
+<ul>
+  <li><strong>Token</strong>: ${name} (<code>${symbol}</code>)</li>
+  <li><strong>Network</strong>: ${network}</li>
+  <li><strong>Token address</strong>: <code>${tokenAddress}</code></li>
+  <li><strong>Deploy tx</strong>: ${deployTxHash ? `<a href="${explorer}${deployTxHash}">${deployTxHash}</a>` : '—'}</li>
+  <li><strong>Mint tx</strong>: ${mintTxHash ? `<a href="${explorer}${mintTxHash}">${mintTxHash}</a>` : '—'}</li>
+</ul>
+<p style="font-size:0.9em;color:#555">UK context: <a href="${UK_CRYPTO_POLICY_URL}">HM Treasury — cryptoassets policy note</a> ·
+<a href="${UK_BLOCKCHAIN_PETITION_URL}">Parliament petition</a> ·
+<a href="${BOE_SYSTEMIC_STABLECOIN_CP_URL}">Bank of England — systemic stablecoins CP</a></p>
+<p style="font-size:0.9em">AgentMail: <a href="${AGENTMAIL_HOME}">agentmail.to</a> · <a href="${AGENTMAIL_LLMS}">llms-full.txt</a></p>
+`.trim()
+
+      const { response, paymentNetwork } = await postAgentMailSendWithMpp(walletAddress, network, {
+        inbox_id: agentMailInboxId.trim(),
+        to: agentMailTo.trim(),
+        subject,
+        text,
+        html,
+        network,
+      })
+
+      const payHeader = response.headers.get('payment-receipt') || response.headers.get('Payment-Receipt') || ''
+      const txFromHeader = extractHexHash(payHeader)
+      if (txFromHeader) addTxHistory({ hash: txFromHeader, network: paymentNetwork, flow: 'email' })
+
+      const raw = await response.text()
+      let data: unknown = null
+      try {
+        data = raw ? JSON.parse(raw) : null
+      } catch {
+        data = null
+      }
+      if (!response.ok) {
+        const obj = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : null
+        const errStr = obj?.error && typeof obj.error === 'string' ? obj.error : null
+        throw new Error(errStr || raw || `HTTP ${response.status}`)
+      }
+      setAgentMailMessage('Summary email sent via AgentMail (check spam folder).')
+      pushLog('AgentMail launch summary sent.')
+    } catch (err) {
+      const message = getErrorMessage(err)
+      setAgentMailMessage(`Send failed: ${message}`)
+      pushLog(`AgentMail send failed: ${message}`)
+    } finally {
+      setAgentMailSending(false)
+    }
   }
 
   const copyText = async (value: string, label: string) => {
@@ -1069,8 +1186,50 @@ export default function Tip20App() {
     <main className="app">
       <header className="hero">
         <h1>TIP-20 Stablecoin Launcher</h1>
-        <p>Dedicated frontend to create + mint TIP-20 stablecoins on Tempo testnet/mainnet.</p>
+        <p>
+          NHS education demo: launch a <strong>Hospital XYZ–style</strong> TIP-20 token on Tempo testnet or mainnet. Pair with{' '}
+          <a href={AGENTMAIL_HOME} target="_blank" rel="noreferrer">
+            AgentMail
+          </a>{' '}
+          for launch notifications.
+        </p>
       </header>
+
+      <section className="card api" style={{ borderLeft: '4px solid #c9a227' }}>
+        <h2>Education-only disclaimer (UK policy context)</h2>
+        <p>
+          This page is for <strong>developer education</strong> and Tempo TIP-20 experimentation. It does not provide clinical
+          care, NHS services, or regulated financial advice. Issuing or dealing in cryptoassets may become subject to UK
+          financial services regulation; read the policy landscape before real-world use.
+        </p>
+        <ul className="log">
+          <li>
+            <a href={UK_CRYPTO_POLICY_URL} target="_blank" rel="noreferrer">
+              HM Treasury — Future financial services regulatory regime for cryptoassets (policy note)
+            </a>
+          </li>
+          <li>
+            <a href={UK_BLOCKCHAIN_PETITION_URL} target="_blank" rel="noreferrer">
+              UK Parliament petition — pro-innovation strategy for blockchain and stablecoins
+            </a>
+          </li>
+          <li>
+            <a href={BOE_SYSTEMIC_STABLECOIN_CP_URL} target="_blank" rel="noreferrer">
+              Bank of England — Proposed regime for sterling-denominated systemic stablecoins (consultation)
+            </a>
+          </li>
+          <li>
+            <a href={AGENTMAIL_HOME} target="_blank" rel="noreferrer">
+              AgentMail
+            </a>{' '}
+            —{' '}
+            <a href={AGENTMAIL_LLMS} target="_blank" rel="noreferrer">
+              docs / llms-full.txt
+            </a>{' '}
+            (machine-readable context for agents)
+          </li>
+        </ul>
+      </section>
 
       <section className="grid">
         <article className="card">
@@ -1203,8 +1362,11 @@ export default function Tip20App() {
             >
               {walletAddress ? 'Wallet Connected' : 'Connect Wallet'}
             </button>
+            <button className="secondary" onClick={setNhsEducationDefaults} disabled={loading}>
+              Apply NHS education preset
+            </button>
             <button className="secondary" onClick={setStablecoinDefaults} disabled={loading}>
-              Apply Stablecoin Defaults
+              Apply Krump USD preset
             </button>
             <button
               className="secondary"
@@ -1309,6 +1471,51 @@ export default function Tip20App() {
             ))}
           </ul>
         </article>
+      </section>
+
+      <section className="card api">
+        <h3>AgentMail — email launch summary</h3>
+        <p>
+          After a successful launch, send a structured summary via{' '}
+          <a href={AGENTMAIL_HOME} target="_blank" rel="noreferrer">
+            AgentMail
+          </a>
+          . Live mode: your wallet pays Tempo MPP to this app&apos;s relay (same pattern as{' '}
+          <a href="/email" target="_blank" rel="noreferrer">
+            /email
+          </a>
+          ). Server needs <code>AGENTMAIL_API_KEY</code> for Bearer send.
+        </p>
+        <div className="field-grid">
+          <label>
+            To (recipient)
+            <input
+              value={agentMailTo}
+              onChange={(e) => setAgentMailTo(e.target.value)}
+              disabled={agentMailSending}
+              placeholder="streetkode@agentmail.to"
+            />
+          </label>
+          <label>
+            Inbox ID (send from)
+            <input
+              value={agentMailInboxId}
+              onChange={(e) => setAgentMailInboxId(e.target.value)}
+              disabled={agentMailSending}
+              placeholder={AGENTMAIL_DEMO_INBOX_ID}
+            />
+          </label>
+        </div>
+        <div className="actions">
+          <button
+            className="secondary"
+            onClick={sendLaunchSummaryEmail}
+            disabled={agentMailSending || !walletAddress || !tokenAddress}
+          >
+            {agentMailSending ? 'Sending…' : 'Email launch summary (AgentMail + MPP)'}
+          </button>
+        </div>
+        {agentMailMessage ? <p className={agentMailMessage.startsWith('Send failed') ? 'error' : undefined}>{agentMailMessage}</p> : null}
       </section>
 
       <section className="card api">

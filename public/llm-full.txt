@@ -2,7 +2,7 @@
 
 **Purpose:** Single file to paste into an LLM system prompt, upload to a coding agent, or feed RAG — **full orientation** to this repository.
 
-**Generated:** 2026-03-21T18:22:48.777Z (re-run `npm run build:llm` after doc edits)
+**Generated:** 2026-03-24T20:47:48.943Z (re-run `npm run build:llm` after doc edits)
 
 **Download (running app):** `/llm-full.txt` from the dev server or production site.
 
